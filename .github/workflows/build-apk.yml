@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK and Windows Receiver
 on:
   push:
     branches: [main]
@@ -16,18 +16,34 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.11.1' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: mymonitor-debug-signing-v1
       - run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor006.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor007.apk
+      - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix
+      - run: x86_64-w64-mingw32-g++-posix windows/receiver.cpp -o MyCastReceiver.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
+      - name: Check packages and checksums
+        run: |
+          test -s mymonitor007.apk
+          test -s MyCastReceiver.exe
+          file MyCastReceiver.exe | grep 'PE32+'
+          sha256sum mymonitor007.apk MyCastReceiver.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
-        with: { name: mymonitor006, path: mymonitor006.apk }
-      - name: Publish downloadable APK
+        with:
+          name: mymonitor007
+          path: |
+            mymonitor007.apk
+            MyCastReceiver.exe
+            TRANSFER.md
+            SHA256SUMS.txt
+      - name: Publish downloads
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.06 >/dev/null 2>&1; then
-            gh release upload v0.06 mymonitor006.apk --clobber
+          if gh release view v0.07 >/dev/null 2>&1; then
+            gh release upload v0.07 mymonitor007.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --clobber
           else
-            gh release create v0.06 mymonitor006.apk \
-              --title "My Monitor v0.06" \
-              --notes "Alpha: transient messages expire after 7 seconds; red recording status stays visible until recording stops. Device test pending."
+            gh release create v0.07 mymonitor007.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 007 + Windows Receiver' --notes 'Alpha: UVC video to Windows over LAN, 640x480 up to 10fps. OBS Window Capture. Video only. Physical device verification pending. See TRANSFER.md.'
           fi

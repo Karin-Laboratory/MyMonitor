@@ -34,6 +34,8 @@ import java.util.Locale
  * a UVC video interface (common for inexpensive HDMI grabbers).
  */
 class MonitorFragment : Fragment(), ICameraStateCallBack {
+    private val windowsSender = WindowsSender { status(it) }
+    private var lastSent = 0L
     private var usbMonitor: USBMonitor? = null
     private var camera: CameraUVC? = null
     private var currentDeviceId: Int? = null
@@ -79,7 +81,14 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 closeCamera()
                 return true
             }
-            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (ready && windowsSender.isRunning() && now - lastSent >= 100L) {
+                    lastSent = now
+                    // Read only UVC texture, never app controls or notifications.
+                    preview.getBitmap(640, 480)?.let { windowsSender.offer(it) }
+                }
+            }
         }
         return root
     }
@@ -177,7 +186,14 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         }
     }
 
+    fun startWindows(host: String, port: Int) {
+        if (!ready) { status("UVC映像を接続してから転送してください"); return }
+        windowsSender.start(host, port)
+    }
+    fun stopWindows() { windowsSender.stop(); status("Windows転送停止") }
+
     private fun closeCamera() {
+        windowsSender.stop()
         ready = false
         recording = false
         stopping = false

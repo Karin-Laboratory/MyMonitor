@@ -1,0 +1,117 @@
+#ifndef UNICODE
+#define UNICODE
+#endif
+#define _UNICODE
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <gdiplus.h>
+#include <shlwapi.h>
+#include <vector>
+#include <algorithm>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <string>
+#include <memory>
+using namespace Gdiplus;
+static HWND windowHandle;
+static std::mutex lockFrame;
+static std::unique_ptr<Bitmap> picture;
+static std::atomic<bool> alive{true};
+static SOCKET listener = INVALID_SOCKET;
+static SOCKET peer = INVALID_SOCKET;
+static std::mutex lockSocket;
+static std::thread worker;
+static bool readExact(SOCKET s, char* dst, int size) {
+    while (size > 0 && alive) { int n = recv(s, dst, size, 0); if (n <= 0) return false; dst += n; size -= n; }
+    return size == 0;
+}
+static void clearPicture() {
+    { std::lock_guard<std::mutex> g(lockFrame); picture.reset(); }
+    PostMessage(windowHandle, WM_APP, 0, 0);
+}
+static void receiveLoop() {
+    while (alive) {
+        SOCKET s = accept(listener, nullptr, nullptr);
+        if (s == INVALID_SOCKET) break;
+        { std::lock_guard<std::mutex> g(lockSocket); if (!alive) { closesocket(s); break; } peer = s; }
+        DWORD timeout = 5000;
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
+        char magic[4];
+        bool valid = readExact(s, magic, 4) && memcmp(magic, "MMC7", 4) == 0;
+        while (alive && valid) {
+            uint32_t networkLength;
+            if (!readExact(s, reinterpret_cast<char*>(&networkLength), 4)) break;
+            uint32_t n = ntohl(networkLength);
+            if (n == 0 || n > 2 * 1024 * 1024) break;
+            std::vector<unsigned char> bytes(n);
+            if (!readExact(s, reinterpret_cast<char*>(bytes.data()), static_cast<int>(n))) break;
+            IStream* stream = SHCreateMemStream(bytes.data(), n);
+            if (!stream) break;
+            {
+                Bitmap decoded(stream);
+                if (decoded.GetLastStatus() == Ok && decoded.GetWidth() <= 4096 && decoded.GetHeight() <= 4096) {
+                    std::unique_ptr<Bitmap> copy(decoded.Clone(0, 0, decoded.GetWidth(), decoded.GetHeight(), PixelFormat32bppRGB));
+                    if (copy && copy->GetLastStatus() == Ok) {
+                        std::lock_guard<std::mutex> g(lockFrame); picture = std::move(copy);
+                    }
+                } else valid = false;
+            }
+            stream->Release();
+            PostMessage(windowHandle, WM_APP, 0, 0);
+        }
+        { std::lock_guard<std::mutex> g(lockSocket); closesocket(s); peer = INVALID_SOCKET; }
+        clearPicture();
+    }
+}
+static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
+    switch (message) {
+    case WM_APP: InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); RECT r; GetClientRect(hwnd, &r);
+        {
+            Graphics graphics(dc); graphics.Clear(Color(0, 0, 0));
+            std::lock_guard<std::mutex> g(lockFrame);
+            if (picture) {
+                double scale = (std::min)(double(r.right) / picture->GetWidth(), double(r.bottom) / picture->GetHeight());
+                int width = int(picture->GetWidth() * scale), height = int(picture->GetHeight() * scale);
+                graphics.DrawImage(picture.get(), (r.right-width)/2, (r.bottom-height)/2, width, height);
+            } else {
+                SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(210,210,210));
+                wchar_t text[] = L"My Cast Receiver\nWaiting on TCP 57007\n\nPixel: Windows IPv4 address + port 57007\nOBS: Window Capture -> My Cast Receiver\nVideo only / same trusted LAN";
+                DrawText(dc, text, -1, &r, DT_CENTER | DT_WORDBREAK);
+            }
+        }
+        EndPaint(hwnd, &ps); return 0;
+    }
+    case WM_SIZE: InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    case WM_CLOSE: DestroyWindow(hwnd); return 0;
+    case WM_DESTROY: PostQuitMessage(0); return 0;
+    }
+    return DefWindowProc(hwnd, message, w, l);
+}
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
+    WSADATA ws; if (WSAStartup(MAKEWORD(2,2), &ws)) return 1;
+    ULONG_PTR token; GdiplusStartupInput input; if (GdiplusStartup(&token, &input, nullptr) != Ok) { WSACleanup(); return 1; }
+    listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_port = htons(57007); addr.sin_addr.s_addr = INADDR_ANY;
+    if (listener == INVALID_SOCKET || bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) || listen(listener, 1)) {
+        MessageBox(nullptr, L"Cannot listen on TCP 57007. Close another receiver and retry.", L"My Cast Receiver", MB_ICONERROR);
+        if(listener != INVALID_SOCKET) closesocket(listener);
+        GdiplusShutdown(token); WSACleanup(); return 1;
+    }
+    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver007"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    RegisterClass(&wc);
+    windowHandle = CreateWindow(wc.lpszClassName, L"My Cast Receiver", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 640, nullptr, nullptr, instance, nullptr);
+    if (!windowHandle) { closesocket(listener); GdiplusShutdown(token); WSACleanup(); return 1; }
+    ShowWindow(windowHandle, show);
+    worker = std::thread(receiveLoop);
+    MSG msg; while (GetMessage(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessage(&msg); }
+    alive = false;
+    closesocket(listener);
+    { std::lock_guard<std::mutex> g(lockSocket); if (peer != INVALID_SOCKET) shutdown(peer, SD_BOTH); }
+    worker.join();
+    picture.reset(); GdiplusShutdown(token); WSACleanup(); return 0;
+}

@@ -80,6 +80,7 @@ class MainActivity : AppCompatActivity() {
         controls.addView(folder)
         controls.addView(smb)
         controls.addView(scan)
+        controls.addView(button("Windowsへ転送") { windowsSettings() })
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         monitor = (supportFragmentManager.findFragmentByTag("monitor") as? MonitorFragment) ?: MonitorFragment()
         val filter = IntentFilter().apply { addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED); addAction(UsbManager.ACTION_USB_DEVICE_DETACHED) }
@@ -217,6 +218,25 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putString("folder", uri.toString()).apply()
             showStatus("保存先を設定しました")
         }
+    }
+
+    private fun windowsSettings() {
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 10, 24, 0) }
+        val address = EditText(this).apply { hint = "WindowsのIPv4アドレス"; setText(prefs.getString("windowsHost", "")); inputType = 1 }
+        val port = EditText(this).apply { hint = "ポート"; setText(prefs.getInt("windowsPort", 57007).toString()); inputType = 2 }
+        layout.addView(address); layout.addView(port)
+        AlertDialog.Builder(this).setTitle("Windowsへ転送（映像のみ）").setView(layout)
+            .setNeutralButton("停止") { _, _ -> monitor.stopWindows() }
+            .setNegativeButton("キャンセル", null)
+            .setPositiveButton("送信開始") { _, _ ->
+                val host = address.text.toString().trim()
+                val number = port.text.toString().toIntOrNull()
+                if (host.isEmpty() || number == null || number !in 1..65535) showStatus("接続先とポートを確認してください")
+                else {
+                    prefs.edit().putString("windowsHost", host).putInt("windowsPort", number).apply()
+                    monitor.startWindows(host, number)
+                }
+            }.show()
     }
 
     private fun smbSettings() {
