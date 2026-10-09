@@ -21,20 +21,20 @@ jobs:
           path: ~/.android/debug.keystore
           key: mymonitor-debug-signing-v1
       - run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor007.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor008.apk
       - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix
       - run: x86_64-w64-mingw32-g++-posix windows/receiver.cpp -o MyCastReceiver.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
       - name: Check packages and checksums
         run: |
-          test -s mymonitor007.apk
+          test -s mymonitor008.apk
           test -s MyCastReceiver.exe
           file MyCastReceiver.exe | grep 'PE32+'
-          sha256sum mymonitor007.apk MyCastReceiver.exe > SHA256SUMS.txt
+          sha256sum mymonitor008.apk MyCastReceiver.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor007
+          name: mymonitor008
           path: |
-            mymonitor007.apk
+            mymonitor008.apk
             MyCastReceiver.exe
             TRANSFER.md
             SHA256SUMS.txt
@@ -42,8 +42,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.07 >/dev/null 2>&1; then
-            gh release upload v0.07 mymonitor007.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --clobber
+          if gh release view v0.08 >/dev/null 2>&1; then
+            gh release upload v0.08 mymonitor008.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --clobber
           else
-            gh release create v0.07 mymonitor007.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 007 + Windows Receiver' --notes 'Alpha: UVC video to Windows over LAN, 640x480 up to 10fps. OBS Window Capture. Video only. Physical device verification pending. See TRANSFER.md.'
+            gh release create v0.08 mymonitor008.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 008 + Windows Receiver' --notes 'Alpha: UVC video to Windows over LAN, 1920x1080 up to 10fps. OBS Window Capture. Video only. 007 transfer tested by user; 008 Full HD and double-buffered rendering pending device verification. See TRANSFER.md.'
           fi

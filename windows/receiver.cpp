@@ -44,7 +44,7 @@ static void receiveLoop() {
             uint32_t networkLength;
             if (!readExact(s, reinterpret_cast<char*>(&networkLength), 4)) break;
             uint32_t n = ntohl(networkLength);
-            if (n == 0 || n > 2 * 1024 * 1024) break;
+            if (n == 0 || n > 8 * 1024 * 1024) break;
             std::vector<unsigned char> bytes(n);
             if (!readExact(s, reinterpret_cast<char*>(bytes.data()), static_cast<int>(n))) break;
             IStream* stream = SHCreateMemStream(bytes.data(), n);
@@ -67,22 +67,47 @@ static void receiveLoop() {
 }
 static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
     switch (message) {
-    case WM_APP: InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    case WM_APP: {
+        std::wstring title = L"My Cast Receiver";
+        {
+            std::lock_guard<std::mutex> g(lockFrame);
+            if (picture) title += L" - " + std::to_wstring(picture->GetWidth()) + L" x " + std::to_wstring(picture->GetHeight());
+        }
+        static std::wstring lastTitle;
+        if (title != lastTitle) { SetWindowText(hwnd, title.c_str()); lastTitle = title; }
+        InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    }
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); RECT r; GetClientRect(hwnd, &r);
-        {
-            Graphics graphics(dc); graphics.Clear(Color(0, 0, 0));
-            std::lock_guard<std::mutex> g(lockFrame);
-            if (picture) {
-                double scale = (std::min)(double(r.right) / picture->GetWidth(), double(r.bottom) / picture->GetHeight());
-                int width = int(picture->GetWidth() * scale), height = int(picture->GetHeight() * scale);
-                graphics.DrawImage(picture.get(), (r.right-width)/2, (r.bottom-height)/2, width, height);
-            } else {
-                SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(210,210,210));
-                wchar_t text[] = L"My Cast Receiver\nWaiting on TCP 57007\n\nPixel: Windows IPv4 address + port 57007\nOBS: Window Capture -> My Cast Receiver\nVideo only / same trusted LAN";
-                DrawText(dc, text, -1, &r, DT_CENTER | DT_WORDBREAK);
+        if (r.right > 0 && r.bottom > 0) {
+            // Paint the complete frame offscreen. Only one BitBlt touches the window,
+            // so OBS and the desktop never see a black-clear intermediate frame.
+            HDC back = CreateCompatibleDC(dc);
+            HBITMAP bitmap = CreateCompatibleBitmap(dc, r.right, r.bottom);
+            if (back && bitmap) {
+                HGDIOBJ previous = SelectObject(back, bitmap);
+                FillRect(back, &r, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+                {
+                    std::lock_guard<std::mutex> g(lockFrame);
+                    if (picture) {
+                        Graphics graphics(back);
+                        graphics.SetInterpolationMode(InterpolationModeBilinear);
+                        double scale = (std::min)(double(r.right) / picture->GetWidth(), double(r.bottom) / picture->GetHeight());
+                        int width = int(picture->GetWidth() * scale), height = int(picture->GetHeight() * scale);
+                        graphics.DrawImage(picture.get(), (r.right-width)/2, (r.bottom-height)/2, width, height);
+                        graphics.Flush(FlushIntentionSync);
+                    } else {
+                        SetBkMode(back, TRANSPARENT); SetTextColor(back, RGB(210,210,210));
+                        wchar_t text[] = L"My Cast Receiver 008\nWaiting on TCP 57007\n\nPixel: Windows IPv4 address + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Video only";
+                        DrawText(back, text, -1, &r, DT_CENTER | DT_WORDBREAK);
+                    }
+                }
+                BitBlt(dc, 0, 0, r.right, r.bottom, back, 0, 0, SRCCOPY);
+                SelectObject(back, previous);
             }
+            if (bitmap) DeleteObject(bitmap);
+            if (back) DeleteDC(back);
         }
         EndPaint(hwnd, &ps); return 0;
     }
@@ -102,9 +127,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if(listener != INVALID_SOCKET) closesocket(listener);
         GdiplusShutdown(token); WSACleanup(); return 1;
     }
-    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver007"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver008"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     RegisterClass(&wc);
-    windowHandle = CreateWindow(wc.lpszClassName, L"My Cast Receiver", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 640, nullptr, nullptr, instance, nullptr);
+    windowHandle = CreateWindow(wc.lpszClassName, L"My Cast Receiver", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 760, nullptr, nullptr, instance, nullptr);
     if (!windowHandle) { closesocket(listener); GdiplusShutdown(token); WSACleanup(); return 1; }
     ShowWindow(windowHandle, show);
     worker = std::thread(receiveLoop);

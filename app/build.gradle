@@ -2,7 +2,7 @@ plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
 android {
     namespace 'com.karinlab.mymonitor'
     compileSdk 36
-    defaultConfig { applicationId 'com.karinlab.mymonitor'; minSdk 26; targetSdk 28; versionCode 7; versionName '0.07' }
+    defaultConfig { applicationId 'com.karinlab.mymonitor'; minSdk 26; targetSdk 28; versionCode 8; versionName '0.08' }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = '17' }
     packaging { jniLibs { useLegacyPackaging = true } }

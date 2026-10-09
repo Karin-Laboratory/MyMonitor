@@ -2,13 +2,13 @@
 
 Android USB UVC camera viewer with screenshots, MP4 recording, local SAF folder export, SMB 2/3 upload, and live video transfer to Windows.
 
-## Download 007
+## Download 008
 
-- [mymonitor007.apk](https://github.com/Karin-Laboratory/MyMonitor/releases/download/v0.07/mymonitor007.apk)
-- [MyCastReceiver.exe](https://github.com/Karin-Laboratory/MyMonitor/releases/download/v0.07/MyCastReceiver.exe)
+- [mymonitor008.apk](https://github.com/Karin-Laboratory/MyMonitor/releases/download/v0.08/mymonitor008.apk)
+- [MyCastReceiver.exe](https://github.com/Karin-Laboratory/MyMonitor/releases/download/v0.08/MyCastReceiver.exe)
 - [Instructions](TRANSFER.md)
 
-The Windows receiver is a standalone x64 EXE. OBS uses Window Capture. Version 007 streams video only at 640x480, up to 10fps. End-to-end testing on physical Pixel/UVC/Windows hardware is pending.
+The Windows receiver is a standalone x64 EXE. OBS uses Window Capture. Version 008 streams video only at 1920x1080, up to 10fps. 007 transfer was confirmed by the user. 008 Full HD and flicker correction await device verification. Windows rendering is double buffered.
 
 ## Build
 

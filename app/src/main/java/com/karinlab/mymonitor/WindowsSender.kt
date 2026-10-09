@@ -1,6 +1,9 @@
 package com.karinlab.mymonitor
 
-import android.graphics.Bitmap
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
+import android.os.SystemClock
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
@@ -11,12 +14,19 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** One in-flight frame, no growing latency queue. Wire: MMC7 + uint32 JPEG length + JPEG. */
 class WindowsSender(private val report: (String) -> Unit) {
     private val running = AtomicBoolean(false)
-    private val frames = ArrayBlockingQueue<Bitmap>(1)
+    private data class Frame(val data: ByteArray, val width: Int, val height: Int)
+    private val frames = ArrayBlockingQueue<Frame>(1)
+    private var lastSent = 0L
     @Volatile private var worker: Thread? = null
     @Volatile private var socket: Socket? = null
     fun isRunning() = running.get()
-    fun offer(bitmap: Bitmap) {
-        if (!running.get() || !frames.offer(bitmap)) bitmap.recycle()
+    @Synchronized fun offer(data: ByteArray, width: Int, height: Int) {
+        if (!running.get() || width <= 0 || height <= 0 || width > 4096 || height > 4096) return
+        if (data.size != width * height * 3 / 2) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastSent < 100L || frames.remainingCapacity() == 0) return
+        lastSent = now
+        frames.offer(Frame(data.copyOf(), width, height))
     }
     @Synchronized fun start(host: String, port: Int) {
         if (worker?.isAlive == true) { report("前の転送を終了中です。少し待って再試行してください"); return }
@@ -33,14 +43,15 @@ class WindowsSender(private val report: (String) -> Unit) {
                     report("Windows接続済み・映像送信中")
                     while (running.get()) {
                         val frame = frames.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
-                        try {
+                        run {
                             val bytes = ByteArrayOutputStream()
-                            frame.compress(Bitmap.CompressFormat.JPEG, 80, bytes)
+                            check(YuvImage(frame.data, ImageFormat.NV21, frame.width, frame.height, null)
+                                .compressToJpeg(Rect(0, 0, frame.width, frame.height), 85, bytes))
                             val jpeg = bytes.toByteArray()
                             out.writeInt(jpeg.size)
                             out.write(jpeg)
                             out.flush()
-                        } finally { frame.recycle() }
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -49,7 +60,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                 running.set(false)
                 try { socket?.close() } catch (_: Exception) {}
                 socket = null
-                while (true) (frames.poll() ?: break).recycle()
+                frames.clear()
             }
         }, "WindowsSender").also { it.start() }
     }

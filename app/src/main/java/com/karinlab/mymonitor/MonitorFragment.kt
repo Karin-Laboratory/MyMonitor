@@ -19,6 +19,7 @@ import androidx.fragment.app.Fragment
 import com.jiangdg.ausbc.MultiCameraClient
 import com.jiangdg.ausbc.callback.ICameraStateCallBack
 import com.jiangdg.ausbc.callback.ICaptureCallBack
+import com.jiangdg.ausbc.callback.IPreviewDataCallBack
 import com.jiangdg.ausbc.camera.CameraUVC
 import com.jiangdg.ausbc.camera.bean.CameraRequest
 import com.jiangdg.ausbc.widget.AspectRatioTextureView
@@ -35,7 +36,6 @@ import java.util.Locale
  */
 class MonitorFragment : Fragment(), ICameraStateCallBack {
     private val windowsSender = WindowsSender { status(it) }
-    private var lastSent = 0L
     private var usbMonitor: USBMonitor? = null
     private var camera: CameraUVC? = null
     private var currentDeviceId: Int? = null
@@ -81,14 +81,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 closeCamera()
                 return true
             }
-            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
-                val now = android.os.SystemClock.elapsedRealtime()
-                if (ready && windowsSender.isRunning() && now - lastSent >= 100L) {
-                    lastSent = now
-                    // Read only UVC texture, never app controls or notifications.
-                    preview.getBitmap(640, 480)?.let { windowsSender.offer(it) }
-                }
-            }
+            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
         }
         return root
     }
@@ -157,8 +150,16 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             camera = newCamera
             newCamera.setUsbControlBlock(control)
             newCamera.setCameraStateCallBack(this)
+            newCamera.addPreviewDataCallBack(object : IPreviewDataCallBack {
+                override fun onPreviewData(data: ByteArray?, width: Int, height: Int, format: IPreviewDataCallBack.DataFormat) {
+                    if (data != null && format == IPreviewDataCallBack.DataFormat.NV21) {
+                        windowsSender.offer(data, width, height)
+                    }
+                }
+            })
             val request = CameraRequest.Builder()
-                .setPreviewWidth(640).setPreviewHeight(480)
+                .setPreviewWidth(1920).setPreviewHeight(1080)
+                .setRawPreviewData(true)
                 .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
                 .setRenderMode(CameraRequest.RenderMode.OPENGL)
                 .setAspectRatioShow(true)
@@ -178,7 +179,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 ICameraStateCallBack.State.OPENED -> {
                     ready = true
                     placeholder.visibility = View.GONE
-                    status("UVC映像表示中 VID/PID接続成功")
+                    val request = self.getCameraRequest()
+                    val width = request?.previewWidth ?: 0
+                    val height = request?.previewHeight ?: 0
+                    status("UVC映像 ${width}×${height}" + if (width == 1920 && height == 1080) " / Full HD" else " / 機器が選択した解像度")
                 }
                 ICameraStateCallBack.State.CLOSED -> { ready = false; status("UVCクローズ") }
                 ICameraStateCallBack.State.ERROR -> { ready = false; status("UVCエラー: ${msg ?: "unknown"}") }
