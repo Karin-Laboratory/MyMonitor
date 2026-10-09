@@ -1,5 +1,13 @@
 package com.karinlab.mymonitor
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.hardware.usb.UsbManager
+import android.hardware.usb.UsbConstants
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import android.os.Build
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -13,12 +21,23 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
 import android.graphics.Color
 
 class MainActivity : AppCompatActivity() {
     private val prefs by lazy { getSharedPreferences("monitor", MODE_PRIVATE) }
     private lateinit var monitor: MonitorFragment
+    private lateinit var video: FrameLayout
+    private var cameraMounted = false
+    private var receiverRegistered = false
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED || intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
+                video.postDelayed({ scanUsbDevices() }, 400)
+            }
+        }
+    }
     private lateinit var state: TextView
     private lateinit var record: Button
     private var controlsVisible = true
@@ -30,11 +49,9 @@ class MainActivity : AppCompatActivity() {
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        val video = FrameLayout(this).apply { id = View.generateViewId() }
+        video = FrameLayout(this).apply { id = View.generateViewId() }
         root.addView(video, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
-        monitor = (supportFragmentManager.findFragmentByTag("monitor") as? MonitorFragment) ?: MonitorFragment()
-        if (!monitor.isAdded) supportFragmentManager.beginTransaction().replace(video.id, monitor, "monitor").commitNow()
 
         state = TextView(this).apply { setTextColor(Color.WHITE); setBackgroundColor(0x88000000.toInt()); text = "USBカメラを接続してください"; setPadding(16, 8, 16, 8); textSize = 14f }
         root.addView(state, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
@@ -48,15 +65,65 @@ class MainActivity : AppCompatActivity() {
         record = button("● 録画") { monitor.toggleRecording() }
         val folder = button("📁 保存先") { chooseFolder() }
         val smb = button("NAS / SMB") { smbSettings() }
+        val scan = button("USB確認") { scanUsbDevices() }
         controls.addView(photo)
         controls.addView(record)
         controls.addView(folder)
         controls.addView(smb)
+        controls.addView(scan)
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        monitor = (supportFragmentManager.findFragmentByTag("monitor") as? MonitorFragment) ?: MonitorFragment()
+        val filter = IntentFilter().apply { addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED); addAction(UsbManager.ACTION_USB_DEVICE_DETACHED) }
+        ContextCompat.registerReceiver(this, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        receiverRegistered = true
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) mountCamera()
+        else { showStatus("USB映像の利用にはカメラ権限が必要です"); requestPermissions(arrayOf(Manifest.permission.CAMERA), 101) }
+        scanUsbDevices()
         root.setOnClickListener {
             controlsVisible = !controlsVisible
             controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
         }
+    }
+
+    private fun mountCamera() {
+        if (cameraMounted) return
+        cameraMounted = true
+        supportFragmentManager.beginTransaction().replace(video.id, monitor, "monitor").commitNow()
+    }
+
+    @Deprecated("Permission callback")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 101) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                mountCamera()
+                scanUsbDevices()
+            } else showStatus("カメラ権限が拒否されました。端末の設定から許可してください")
+        }
+    }
+
+    private fun scanUsbDevices() {
+        val usb = getSystemService(Context.USB_SERVICE) as UsbManager
+        val devices = usb.deviceList.values.toList()
+        val cameras = devices.filter { device ->
+            (0 until device.interfaceCount).any { device.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_VIDEO }
+                || device.deviceClass == UsbConstants.USB_CLASS_VIDEO
+        }
+        val details = devices.joinToString("; ") { device ->
+            val classes = (0 until device.interfaceCount).joinToString(",") { device.getInterface(it).interfaceClass.toString() }
+            "VID:%04X PID:%04X cls:%d if:[%s]".format(device.vendorId, device.productId, device.deviceClass, classes)
+        }
+        val message = when {
+            devices.isEmpty() -> "USB機器なし。OTG・ケーブル・給電を確認"
+            cameras.isEmpty() -> "USB機器 ${devices.size}台検出、映像用インターフェースなし: $details"
+            else -> "UVC候補 ${cameras.size}台検出: $details"
+        }
+        showStatus(message)
+    }
+
+    override fun onDestroy() {
+        if (receiverRegistered) { unregisterReceiver(usbReceiver); receiverRegistered = false }
+        super.onDestroy()
     }
 
     private fun button(label: String, onClick: () -> Unit) = Button(this).apply {
