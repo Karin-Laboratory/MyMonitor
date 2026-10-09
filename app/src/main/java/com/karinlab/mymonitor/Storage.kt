@@ -64,8 +64,8 @@ object Storage {
                         val directory = SmbFile(base.trimEnd('/') + "/", ctx)
                         if (!directory.exists()) directory.mkdirs()
                         val remote = SmbFile(directory, exportedName)
-                        remote.outputStream.use { out -> FileInputStream(file).use { it.copyTo(out) } }
-                        status("SMBへ転送完了: ${file.name}")
+                        remote.outputStream.use { out -> FileInputStream(source).use { it.copyTo(out) } }
+                        status("SMBへ転送完了: ${exportedName}")
                     } catch (e: Exception) {
                         status("SMB転送失敗。ローカルに保持: ${e.message}")
                     } finally { pass.fill('\u0000') }
