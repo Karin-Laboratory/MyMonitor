@@ -14,7 +14,6 @@ import java.io.FileInputStream
  * A failed export never deletes the local original.
  */
 object Storage {
-    @Volatile var password: CharArray? = null
 
     fun save(activity: MainActivity, file: File, mime: String, prefs: SharedPreferences, status: (String) -> Unit) {
         Thread {
@@ -22,6 +21,14 @@ object Storage {
                 status("保存失敗: 元ファイルがありません")
                 return@Thread
             }
+            // The encoder may append its extension to a path which already ends with .mp4.
+            // Normalize the local source as well as each exported filename.
+            var source = file
+            if (file.name.endsWith(".mp4.mp4", ignoreCase = true)) {
+                val corrected = File(file.parentFile, file.name.dropLast(4))
+                if (!corrected.exists() && file.renameTo(corrected)) source = corrected
+            }
+            val exportedName = source.name.replace(Regex("(?i)(\\.mp4){2,}$"), ".mp4")
             var hasDestination = false
             val folder = prefs.getString("folder", null)
             if (folder != null) {
@@ -29,12 +36,12 @@ object Storage {
                 try {
                     val tree = Uri.parse(folder)
                     val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-                    val target = DocumentsContract.createDocument(activity.contentResolver, parent, mime, file.name)
+                    val target = DocumentsContract.createDocument(activity.contentResolver, parent, mime, exportedName)
                         ?: error("ドキュメントを作成できません")
                     activity.contentResolver.openOutputStream(target, "w")?.use { out ->
-                        FileInputStream(file).use { it.copyTo(out) }
+                        FileInputStream(source).use { it.copyTo(out) }
                     } ?: error("保存先に書き込めません")
-                    status("フォルダへ保存: ${file.name}")
+                    status("フォルダへ保存: ${exportedName}")
                 } catch (e: Exception) {
                     status("フォルダ保存失敗。ローカルに保持: ${e.message}")
                 }
@@ -42,9 +49,12 @@ object Storage {
             val base = prefs.getString("smb", null)
             if (!base.isNullOrBlank()) {
                 hasDestination = true
-                val pass = password?.copyOf()
+                val pass = try { SmbCredentials.load(activity) } catch (e: Exception) {
+                    status("保存済みSMB資格情報を読み込めません。再設定してください: ${e.message}")
+                    null
+                }
                 if (pass == null) {
-                    status("SMB未接続: 設定画面でパスワードを再入力してください。ローカルに保持")
+                    status("SMB未接続: 設定画面で資格情報を保存してください。ローカルに保持")
                 } else {
                     try {
                         val domain = prefs.getString("domain", "") ?: ""
@@ -53,7 +63,7 @@ object Storage {
                         val ctx = SingletonContext.getInstance().withCredentials(auth)
                         val directory = SmbFile(base.trimEnd('/') + "/", ctx)
                         if (!directory.exists()) directory.mkdirs()
-                        val remote = SmbFile(directory, file.name)
+                        val remote = SmbFile(directory, exportedName)
                         remote.outputStream.use { out -> FileInputStream(file).use { it.copyTo(out) } }
                         status("SMBへ転送完了: ${file.name}")
                     } catch (e: Exception) {
