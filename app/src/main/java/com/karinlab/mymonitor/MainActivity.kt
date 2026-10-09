@@ -12,6 +12,8 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -42,6 +44,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private lateinit var state: TextView
+    private val messageHandler = Handler(Looper.getMainLooper())
+    private var expireMessage: Runnable? = null
+    private var recordingActive = false
     private lateinit var record: Button
     private var controlsVisible = true
     private lateinit var controls: LinearLayout
@@ -126,6 +131,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        expireMessage?.let { messageHandler.removeCallbacks(it) }
         if (receiverRegistered) { unregisterReceiver(usbReceiver); receiverRegistered = false }
         super.onDestroy()
     }
@@ -138,18 +144,61 @@ class MainActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
     }
 
-    fun showStatus(message: String) { runOnUiThread { state.text = message } }
-    fun setRecording(active: Boolean) { runOnUiThread {
-        if (active) {
-            record.text = "■ 停止"
-        } else {
-            val label = SpannableString("● 録画")
-            label.setSpan(ForegroundColorSpan(Color.RED), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            record.text = label
+    /**
+     * Notifications expire after 7 seconds. The persistent recording indicator is
+     * restored after other notifications and never expires while capture is active.
+     * Each update invalidates the previous timeout so stale callbacks cannot hide
+     * a newer message.
+     */
+    private fun redDotLabel(text: String): SpannableString =
+        SpannableString(text).apply {
+            val dot = text.indexOf('●')
+            if (dot >= 0) setSpan(ForegroundColorSpan(Color.RED), dot, dot + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        record.setTextColor(Color.WHITE)
-        // setTextColor on TextView does not remove span foreground color.
-    } }
+
+    private fun showRecordingStatus() {
+        state.text = redDotLabel("● 録画中")
+        state.visibility = View.VISIBLE
+    }
+
+    fun showStatus(message: String) {
+        runOnUiThread {
+            expireMessage?.let { messageHandler.removeCallbacks(it) }
+            expireMessage = null
+            if (recordingActive && message == "● 録画中") {
+                showRecordingStatus()
+                return@runOnUiThread
+            }
+            state.text = if (message.startsWith("● 録画中")) redDotLabel(message) else message
+            state.visibility = View.VISIBLE
+            val expiration = Runnable {
+                if (recordingActive) showRecordingStatus()
+                else state.visibility = View.GONE
+                expireMessage = null
+            }
+            expireMessage = expiration
+            messageHandler.postDelayed(expiration, 7_000L)
+        }
+    }
+
+    fun setRecording(active: Boolean) {
+        runOnUiThread {
+            recordingActive = active
+            if (active) {
+                record.text = "■ 停止"
+                expireMessage?.let { messageHandler.removeCallbacks(it) }
+                expireMessage = null
+                showRecordingStatus()
+            } else {
+                record.text = redDotLabel("● 録画")
+                // Current notifications will still expire normally after their 7-second timer.
+                if (state.text.toString() == "● 録画中") {
+                    state.visibility = View.GONE
+                }
+            }
+            record.setTextColor(Color.WHITE)
+        }
+    }
     fun saveMedia(file: java.io.File, mime: String) { Storage.save(this, file, mime, prefs) { showStatus(it) } }
 
     private fun chooseFolder() {
