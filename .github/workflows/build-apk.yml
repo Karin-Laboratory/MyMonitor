@@ -3,6 +3,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+concurrency:
+  group: mymonitor-publish
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,6 +24,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v0.05" mymonitor005.apk \
-            --title "My Monitor v0.05" \
-            --notes "Development APK. UVC hardware and SMB storage need device testing."
+          if gh release view v0.05 >/dev/null 2>&1; then
+            gh release upload v0.05 mymonitor005.apk --clobber
+          else
+            gh release create v0.05 mymonitor005.apk \
+              --title "My Monitor v0.05" \
+              --notes "Alpha: normalized video filenames, encrypted saved SMB credentials, monitor icon, two-tone record button. Device test pending."
+          fi
