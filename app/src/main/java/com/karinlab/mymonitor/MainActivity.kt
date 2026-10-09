@@ -24,6 +24,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
 import android.graphics.Color
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 
 class MainActivity : AppCompatActivity() {
     private val prefs by lazy { getSharedPreferences("monitor", MODE_PRIVATE) }
@@ -63,6 +66,7 @@ class MainActivity : AppCompatActivity() {
         }
         val photo = button("📷 撮影") { monitor.takePhoto() }
         record = button("● 録画") { monitor.toggleRecording() }
+        setRecording(false)
         val folder = button("📁 保存先") { chooseFolder() }
         val smb = button("NAS / SMB") { smbSettings() }
         val scan = button("USB確認") { scanUsbDevices(); monitor.refreshUsb() }
@@ -135,7 +139,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun showStatus(message: String) { runOnUiThread { state.text = message } }
-    fun setRecording(active: Boolean) { runOnUiThread { record.text = if (active) "■ 停止" else "● 録画" } }
+    fun setRecording(active: Boolean) { runOnUiThread {
+        if (active) {
+            record.text = "■ 停止"
+        } else {
+            val label = SpannableString("● 録画")
+            label.setSpan(ForegroundColorSpan(Color.RED), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            record.text = label
+        }
+        record.setTextColor(Color.WHITE)
+        // setTextColor on TextView does not remove span foreground color.
+    } }
     fun saveMedia(file: java.io.File, mime: String) { Storage.save(this, file, mime, prefs) { showStatus(it) } }
 
     private fun chooseFolder() {
@@ -167,11 +181,12 @@ class MainActivity : AppCompatActivity() {
         val path = field("smb://192.168.1.10/share/folder", "smb")
         val domain = field("ドメイン (省略可)", "domain")
         val username = field("ユーザー名", "username")
-        val password = field("パスワード (この起動中だけ保持)", "unused", true)
+        val password = field("パスワード (変更時のみ入力)", "unused", true)
+        if (SmbCredentials.hasSavedPassword(this)) password.hint = "保存済みパスワードあり (変更する場合のみ入力)"
         AlertDialog.Builder(this).setTitle("SMB保存先")
             .setView(layout)
             .setNeutralButton("無効にする") { _, _ ->
-                prefs.edit().remove("smb").apply(); Storage.password = null; showStatus("SMB転送を無効にしました")
+                prefs.edit().remove("smb").remove("domain").remove("username").apply(); SmbCredentials.clear(this); showStatus("SMB転送設定と保存済みパスワードを削除しました")
             }
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("保存") { _, _ ->
@@ -179,9 +194,19 @@ class MainActivity : AppCompatActivity() {
                 if (!url.startsWith("smb://") || url.contains("@")) {
                     showStatus("SMB URLは smb://host/share の形式で入力してください")
                 } else {
-                    prefs.edit().putString("smb", url).putString("domain", domain.text.toString()).putString("username", username.text.toString()).apply()
-                    Storage.password = password.text.toString().toCharArray()
-                    showStatus("SMB転送を有効にしました")
+                    val entered = password.text.toString().toCharArray()
+                    try {
+                        if (entered.isNotEmpty()) SmbCredentials.save(this, entered)
+                        if (!SmbCredentials.hasSavedPassword(this)) {
+                            showStatus("SMBパスワードを入力してください")
+                        } else {
+                            prefs.edit().putString("smb", url).putString("domain", domain.text.toString())
+                                .putString("username", username.text.toString()).apply()
+                            showStatus("SMB設定と暗号化パスワードを保存しました")
+                        }
+                    } catch (e: Exception) {
+                        showStatus("SMB資格情報の保存に失敗: ${e.message}")
+                    } finally { entered.fill('\\u0000') }
                 }
             }.show()
     }
