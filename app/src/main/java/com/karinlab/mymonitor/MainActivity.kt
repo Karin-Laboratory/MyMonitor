@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         val video = FrameLayout(this).apply { id = View.generateViewId() }
         root.addView(video, FrameLayout.LayoutParams(-1, -1))
+        setContentView(root)
         monitor = (supportFragmentManager.findFragmentByTag("monitor") as? MonitorFragment) ?: MonitorFragment()
         if (!monitor.isAdded) supportFragmentManager.beginTransaction().replace(video.id, monitor, "monitor").commitNow()
 
@@ -56,7 +57,6 @@ class MainActivity : AppCompatActivity() {
             controlsVisible = !controlsVisible
             controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
         }
-        setContentView(root)
     }
 
     private fun button(label: String, onClick: () -> Unit) = Button(this).apply {
