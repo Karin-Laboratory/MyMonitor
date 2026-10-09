@@ -34,7 +34,7 @@ class MainActivity : AppCompatActivity() {
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED || intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
-                video.postDelayed({ scanUsbDevices() }, 400)
+                video.postDelayed({ scanUsbDevices(); monitor.refreshUsb() }, 400)
             }
         }
     }
@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
         record = button("● 録画") { monitor.toggleRecording() }
         val folder = button("📁 保存先") { chooseFolder() }
         val smb = button("NAS / SMB") { smbSettings() }
-        val scan = button("USB確認") { scanUsbDevices() }
+        val scan = button("USB確認") { scanUsbDevices(); monitor.refreshUsb() }
         controls.addView(photo)
         controls.addView(record)
         controls.addView(folder)
