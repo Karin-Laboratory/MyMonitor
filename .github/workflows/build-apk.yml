@@ -14,13 +14,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.11.1' }
       - run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor003.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor004.apk
       - uses: actions/upload-artifact@v4
-        with: { name: mymonitor003, path: mymonitor003.apk }
+        with: { name: mymonitor004, path: mymonitor004.apk }
       - name: Publish downloadable APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v0.03" mymonitor003.apk \
-            --title "My Monitor v0.03" \
+          gh release create "v0.04" mymonitor004.apk \
+            --title "My Monitor v0.04" \
             --notes "Development APK. UVC hardware and SMB storage need device testing."
