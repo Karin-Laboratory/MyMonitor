@@ -64,7 +64,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         }
         root.addView(placeholder, FrameLayout.LayoutParams(-1, -1))
         preview = AspectRatioTextureView(requireContext())
-        root.addView(preview, FrameLayout.LayoutParams(-1, -1))
+        root.addView(preview, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
                 viewReady = true
@@ -153,7 +153,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
                 .setRenderMode(CameraRequest.RenderMode.OPENGL)
                 .setAspectRatioShow(true)
-                .setAudioSource(CameraRequest.AudioSource.SOURCE_AUTO)
+                .setAudioSource(CameraRequest.AudioSource.NONE)
                 .create()
             newCamera.openCamera(preview, request)
         } catch (e: Exception) {
@@ -228,7 +228,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         }
         if (!ready || c == null) { status("UVC映像未接続。USB確認から再試行"); return }
         val output = destination("mp4")
-        c.captureVideoStart(object : ICaptureCallBack {
+        status("映像のみのMP4録画を開始中…")
+        try { c.captureVideoStart(object : ICaptureCallBack {
             override fun onBegin() {
                 recording = true; stopping = false
                 host()?.setRecording(true); status("● 録画中")
@@ -244,6 +245,11 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 if (result.exists() && result.length() > 0L) host()?.saveMedia(result, "video/mp4")
                 else status("録画ファイルが見つかりません")
             }
-        }, output.absolutePath)
+        }, output.absolutePath) } catch (e: Exception) {
+            recording = false; stopping = false
+            host()?.setRecording(false)
+            status("録画開始失敗: ${e.message}")
+            Log.e("MyMonitor-UVC", "Video capture start failed", e)
+        }
     }
 }
