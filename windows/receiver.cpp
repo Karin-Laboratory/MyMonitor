@@ -116,6 +116,15 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         if (title != lastTitle) { SetWindowText(hwnd, title.c_str()); lastTitle = title; }
         InvalidateRect(hwnd, nullptr, FALSE); return 0;
     }
+    case WM_GETMINMAXINFO: {
+        // Windows defaults max tracking size to current display dimensions.
+        // The capture surface may be bigger than the desktop (e.g. a headless
+        // GitHub runner or a 1080p screen with window decorations).
+        auto* info = reinterpret_cast<MINMAXINFO*>(l);
+        info->ptMaxTrackSize.x = (std::max)(info->ptMaxTrackSize.x, 4096L);
+        info->ptMaxTrackSize.y = (std::max)(info->ptMaxTrackSize.y, 4096L);
+        return 0;
+    }
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); RECT r; GetClientRect(hwnd, &r);
