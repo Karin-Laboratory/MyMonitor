@@ -4,3 +4,10 @@ build/
 .idea/
 local.properties
 *.iml
+
+windows/monitor.ico
+windows/*-res.o
+
+.signing/
+__pycache__/
+*.pyc

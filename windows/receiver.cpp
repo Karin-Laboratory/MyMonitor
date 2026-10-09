@@ -36,10 +36,13 @@ static void receiveLoop() {
         SOCKET s = accept(listener, nullptr, nullptr);
         if (s == INVALID_SOCKET) break;
         { std::lock_guard<std::mutex> g(lockSocket); if (!alive) { closesocket(s); break; } peer = s; }
+        BOOL noDelay = TRUE;
+        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&noDelay), sizeof(noDelay));
         DWORD timeout = 5000;
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
+        setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
         char magic[4];
-        bool valid = readExact(s, magic, 4) && memcmp(magic, "MMC7", 4) == 0;
+        bool valid = readExact(s, magic, 4) && memcmp(magic, "MMC9", 4) == 0;
         while (alive && valid) {
             uint32_t networkLength;
             if (!readExact(s, reinterpret_cast<char*>(&networkLength), 4)) break;
@@ -55,11 +58,14 @@ static void receiveLoop() {
                     std::unique_ptr<Bitmap> copy(decoded.Clone(0, 0, decoded.GetWidth(), decoded.GetHeight(), PixelFormat32bppRGB));
                     if (copy && copy->GetLastStatus() == Ok) {
                         std::lock_guard<std::mutex> g(lockFrame); picture = std::move(copy);
-                    }
+                    } else valid = false;
                 } else valid = false;
             }
             stream->Release();
+            if (!valid) break;
             PostMessage(windowHandle, WM_APP, 0, 0);
+            const char ack = 0x06;
+            if (send(s, &ack, 1, 0) != 1) break;
         }
         { std::lock_guard<std::mutex> g(lockSocket); closesocket(s); peer = INVALID_SOCKET; }
         clearPicture();
@@ -99,7 +105,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                         graphics.Flush(FlushIntentionSync);
                     } else {
                         SetBkMode(back, TRANSPARENT); SetTextColor(back, RGB(210,210,210));
-                        wchar_t text[] = L"My Cast Receiver 008\nWaiting on TCP 57007\n\nPixel: Windows IPv4 address + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Video only";
+                        wchar_t text[] = L"My Cast Receiver 009\nWaiting on TCP 57007\n\nPixel: Windows IPv4 address + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Video only";
                         DrawText(back, text, -1, &r, DT_CENTER | DT_WORDBREAK);
                     }
                 }
@@ -127,10 +133,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if(listener != INVALID_SOCKET) closesocket(listener);
         GdiplusShutdown(token); WSACleanup(); return 1;
     }
-    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver008"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver009"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIcon(instance, MAKEINTRESOURCE(101));
     RegisterClass(&wc);
     windowHandle = CreateWindow(wc.lpszClassName, L"My Cast Receiver", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 760, nullptr, nullptr, instance, nullptr);
     if (!windowHandle) { closesocket(listener); GdiplusShutdown(token); WSACleanup(); return 1; }
+    SendMessage(windowHandle, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(LoadImage(instance, MAKEINTRESOURCE(101), IMAGE_ICON, 48, 48, LR_DEFAULTCOLOR)));
+    SendMessage(windowHandle, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(LoadImage(instance, MAKEINTRESOURCE(101), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR)));
     ShowWindow(windowHandle, show);
     worker = std::thread(receiveLoop);
     MSG msg; while (GetMessage(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessage(&msg); }

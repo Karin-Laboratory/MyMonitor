@@ -9,7 +9,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions: { contents: write }
+    permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -18,32 +18,71 @@ jobs:
         with: { gradle-version: '8.11.1' }
       - uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: mymonitor-debug-signing-v1
+          path: .signing/debug.keystore
+          key: mymonitor-explicit-debug-signing-v2
+      - name: Prepare cached development signing key
+        run: |
+          mkdir -p .signing
+          if [ ! -f .signing/debug.keystore ]; then
+            keytool -genkeypair -keystore .signing/debug.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+          fi
       - run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor008.apk
-      - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix
-      - run: x86_64-w64-mingw32-g++-posix windows/receiver.cpp -o MyCastReceiver.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor009.apk
+      - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix python3-cairosvg python3-pil
+      - name: Embed matching Android icon and compile standalone EXE
+        run: |
+          /usr/bin/python3 scripts/make_windows_icon.py
+          cd windows
+          x86_64-w64-mingw32-windres receiver.rc -O coff -o receiver-res.o
+          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../MyCastReceiver.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
       - name: Check packages and checksums
         run: |
-          test -s mymonitor008.apk
-          test -s MyCastReceiver.exe
+          test -s mymonitor009.apk
           file MyCastReceiver.exe | grep 'PE32+'
-          sha256sum mymonitor008.apk MyCastReceiver.exe > SHA256SUMS.txt
+          sha256sum mymonitor009.apk MyCastReceiver.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor008
+          name: mymonitor009
           path: |
-            mymonitor008.apk
+            mymonitor009.apk
             MyCastReceiver.exe
             TRANSFER.md
             SHA256SUMS.txt
-      - name: Publish downloads
+  windows-test:
+    needs: build
+    runs-on: windows-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: mymonitor009 }
+      - name: Test actual EXE with Full HD images
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $image = [System.Drawing.Bitmap]::new(1920,1080)
+          $g = [System.Drawing.Graphics]::FromImage($image)
+          $g.Clear([System.Drawing.Color]::CornflowerBlue)
+          $image.Save("$pwd/test.jpg", [System.Drawing.Imaging.ImageFormat]::Jpeg)
+          $g.Dispose()
+          $image.Dispose()
+          python windows/smoke_test.py test.jpg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  publish:
+    needs: windows-test
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: mymonitor009 }
+      - name: Publish verified downloads
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          if gh release view v0.08 >/dev/null 2>&1; then
-            gh release upload v0.08 mymonitor008.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --clobber
+          sha256sum -c SHA256SUMS.txt
+          if gh release view v0.09 >/dev/null 2>&1; then
+            gh release upload v0.09 mymonitor009.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --clobber
           else
-            gh release create v0.08 mymonitor008.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 008 + Windows Receiver' --notes 'Alpha: UVC video to Windows over LAN, 1920x1080 up to 10fps. OBS Window Capture. Video only. 007 transfer tested by user; 008 Full HD and double-buffered rendering pending device verification. See TRANSFER.md.'
+            gh release create v0.09 mymonitor009.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 009 + Low-latency Windows Receiver' --notes 'Full HD, latest-frame replacement and one-frame ACK flow control; up to 15fps, JPEG quality 75, video only. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
           fi
