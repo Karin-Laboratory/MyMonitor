@@ -24,6 +24,7 @@ import com.jiangdg.ausbc.camera.CameraUVC
 import com.jiangdg.ausbc.camera.bean.CameraRequest
 import com.jiangdg.ausbc.widget.AspectRatioTextureView
 import com.jiangdg.usb.USBMonitor
+import com.jiangdg.uvc.IFrameCallback
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -178,6 +179,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             when (code) {
                 ICameraStateCallBack.State.OPENED -> {
                     ready = true
+                    // Native MJPEG callback is independent of NV21 used for photo/recording.
+                    (self as? CameraUVC)?.setMjpegDataCallback(IFrameCallback { buffer ->
+                        if (buffer != null) windowsSender.offerJpeg(buffer)
+                    })
                     placeholder.visibility = View.GONE
                     val request = self.getCameraRequest()
                     val width = request?.previewWidth ?: 0
@@ -203,6 +208,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         stopping = false
         host()?.setRecording(false)
         camera?.setCameraStateCallBack(null)
+        camera?.setMjpegDataCallback(null)
         camera?.closeCamera()
         camera = null
         currentDeviceId = null

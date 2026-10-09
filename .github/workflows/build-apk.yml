@@ -26,26 +26,33 @@ jobs:
           if [ ! -f .signing/debug.keystore ]; then
             keytool -genkeypair -keystore .signing/debug.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
           fi
-      - run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor010.apk
+      - name: Fetch pinned upstream UVC and apply MJPEG tap
+        run: |
+          mkdir -p vendor
+          git clone --depth 1 --branch 3.6.0 https://github.com/ernestp/AndroidUSBCamera.git vendor/AndroidUSBCamera
+          test "$(git -C vendor/AndroidUSBCamera rev-parse HEAD)" = "09df386a46e6aef22e4a020105246b2c9805ed05"
+          python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
+      - name: Build bundled native UVC and APK
+        run: gradle :app:assembleDebug --stacktrace
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor011.apk
       - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix python3-cairosvg python3-pil
       - name: Embed matching Android icon and compile standalone EXE
         run: |
           /usr/bin/python3 scripts/make_windows_icon.py
           cd windows
           x86_64-w64-mingw32-windres receiver.rc -O coff -o receiver-res.o
-          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver010.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
+          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver011.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
       - name: Check packages and checksums
         run: |
-          test -s mymonitor010.apk
-          file mycastreceiver010.exe | grep 'PE32+'
-          sha256sum mymonitor010.apk mycastreceiver010.exe > SHA256SUMS.txt
+          test -s mymonitor011.apk
+          file mycastreceiver011.exe | grep 'PE32+'
+          sha256sum mymonitor011.apk mycastreceiver011.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor010
+          name: mymonitor011
           path: |
-            mymonitor010.apk
-            mycastreceiver010.exe
+            mymonitor011.apk
+            mycastreceiver011.exe
             TRANSFER.md
             SHA256SUMS.txt
   windows-test:
@@ -55,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor010 }
+        with: { name: mymonitor011 }
       - name: Test actual EXE with Full HD images
         shell: pwsh
         run: |
@@ -74,15 +81,15 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor010 }
+        with: { name: mymonitor011 }
       - name: Publish verified downloads
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.10 >/dev/null 2>&1; then
-            gh release upload v0.10 mymonitor010.apk mycastreceiver010.exe TRANSFER.md SHA256SUMS.txt --clobber
+          if gh release view v0.11 >/dev/null 2>&1; then
+            gh release upload v0.11 mymonitor011.apk mycastreceiver011.exe TRANSFER.md SHA256SUMS.txt --clobber
           else
-            gh release create v0.10 mymonitor010.apk mycastreceiver010.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 010 + Low-latency Windows Receiver' --notes 'Full HD, latest-frame replacement and one-frame ACK flow control; up to 30fps, JPEG quality 75, video only. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
+            gh release create v0.11 mymonitor011.apk mycastreceiver011.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 011 + Low-latency Windows Receiver' --notes 'MJPEG passthrough (NV21 fallback), LAN UDP receiver discovery, 1920x1080 client startup, one-frame ACK and Full HD. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
           fi

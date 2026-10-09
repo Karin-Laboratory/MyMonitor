@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private var recordingActive = false
     private lateinit var record: Button
     private var controlsVisible = true
+    @Volatile private var discoveringWindows = false
     private lateinit var controls: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,7 +81,7 @@ class MainActivity : AppCompatActivity() {
         controls.addView(folder)
         controls.addView(smb)
         controls.addView(scan)
-        controls.addView(button("Windowsへ転送") { windowsSettings() })
+        controls.addView(button("Windowsへ転送") { discoverWindows() })
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         monitor = (supportFragmentManager.findFragmentByTag("monitor") as? MonitorFragment) ?: MonitorFragment()
         val filter = IntentFilter().apply { addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED); addAction(UsbManager.ACTION_USB_DEVICE_DETACHED) }
@@ -218,6 +219,43 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putString("folder", uri.toString()).apply()
             showStatus("保存先を設定しました")
         }
+    }
+
+    private fun discoverWindows() {
+        if (discoveringWindows) return
+        discoveringWindows = true
+        showStatus("LAN内のMy Cast Receiverを検索中…")
+        Thread({
+            val results = try { ReceiverDiscovery.scan() } catch (_: Exception) { emptyList() }
+            runOnUiThread {
+                discoveringWindows = false
+                when (results.size) {
+                    0 -> {
+                        showStatus("受信機が見つかりません。IPを手入力できます")
+                        windowsSettings()
+                    }
+                    1 -> {
+                        val receiver = results.single()
+                        prefs.edit().putString("windowsHost", receiver.host).putInt("windowsPort", receiver.port).apply()
+                        showStatus("受信機1台を発見・" + receiver.host + " に自動接続")
+                        monitor.startWindows(receiver.host, receiver.port)
+                    }
+                    else -> {
+                        val items = results.map { it.host + ":" + it.port }.toTypedArray()
+                        AlertDialog.Builder(this)
+                            .setTitle("受信機を" + results.size + "台発見（接続先を選択）")
+                            .setItems(items) { _, index ->
+                                val receiver = results[index]
+                                prefs.edit().putString("windowsHost", receiver.host).putInt("windowsPort", receiver.port).apply()
+                                monitor.startWindows(receiver.host, receiver.port)
+                            }
+                            .setNeutralButton("IPを手入力") { _, _ -> windowsSettings() }
+                            .setNegativeButton("キャンセル", null)
+                            .show()
+                    }
+                }
+            }
+        }, "ReceiverDiscovery").start()
     }
 
     private fun windowsSettings() {

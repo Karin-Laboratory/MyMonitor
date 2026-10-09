@@ -13,17 +13,30 @@ u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctyp
 u.SendMessageW.restype = ctypes.c_ssize_t
 u.PostMessageW.argtypes = u.SendMessageW.argtypes
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-process = subprocess.Popen([str(Path('mycastreceiver010.exe').resolve())])
+process = subprocess.Popen([str(Path('mycastreceiver011.exe').resolve())])
 try:
     deadline = time.monotonic() + 15
     hwnd = None
     while time.monotonic() < deadline:
-        hwnd = u.FindWindowW('MyCastReceiver010', None)
+        hwnd = u.FindWindowW('MyCastReceiver011', None)
         if hwnd: break
         time.sleep(.1)
     assert hwnd, 'Receiver window not created'
     assert u.SendMessageW(hwnd, 0x7f, 0, 0), 'Small window icon missing'
     assert u.SendMessageW(hwnd, 0x7f, 1, 0), 'Large window icon missing'
+    u.GetClientRect.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    class RECT(ctypes.Structure):
+        _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                    ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+    rc = RECT()
+    assert u.GetClientRect(hwnd, ctypes.byref(rc))
+    assert (rc.right - rc.left, rc.bottom - rc.top) == (1920,1080), f'client size: {rc.right} x {rc.bottom}'
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.settimeout(2)
+        udp.sendto(b'MYMONITOR_DISCOVER_V1', ('127.0.0.1', 57008))
+        reply, _ = udp.recvfrom(128)
+        assert reply == b'MYCAST_RECEIVER_V1|57007', f'Discovery reply: {reply!r}'
+    print('LAN discovery + 1920x1080 client area: PASS')
     jpeg = Path(sys.argv[1]).read_bytes()
     packet = struct.pack('!I', len(jpeg)) + jpeg
     with socket.create_connection(('127.0.0.1', 57007), timeout=3) as s:

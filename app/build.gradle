@@ -13,7 +13,7 @@ android {
             }
         }
     }
-    defaultConfig { applicationId 'com.karinlab.mymonitor'; minSdk 26; targetSdk 28; versionCode 10; versionName '0.10' }
+    defaultConfig { applicationId 'com.karinlab.mymonitor'; minSdk 26; targetSdk 28; versionCode 11; versionName '0.11' }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = '17' }
     packaging { jniLibs { useLegacyPackaging = true } }
@@ -21,8 +21,7 @@ android {
 dependencies {
     implementation 'androidx.core:core-ktx:1.15.0'
     implementation 'androidx.appcompat:appcompat:1.7.0'
-    implementation 'com.github.ernestp.AndroidUSBCamera:libausbc:3.6.0'
-    implementation 'com.github.ernestp.AndroidUSBCamera:libuvc:3.6.0'
+    implementation project(':libausbc')
     implementation 'eu.agno3.jcifs:jcifs-ng:2.1.10'
     implementation 'org.slf4j:slf4j-nop:2.0.16'
 }
