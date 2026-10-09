@@ -19,6 +19,8 @@ using namespace Gdiplus;
 static HWND windowHandle;
 static std::mutex lockFrame;
 static std::unique_ptr<Bitmap> picture;
+static std::atomic<bool> linkConnected{false};
+static std::atomic<unsigned long> rejectedFrames{0};
 static std::atomic<bool> alive{true};
 static SOCKET listener = INVALID_SOCKET;
 static SOCKET peer = INVALID_SOCKET;
@@ -30,8 +32,10 @@ static bool readExact(SOCKET s, char* dst, int size) {
     while (size > 0 && alive) { int n = recv(s, dst, size, 0); if (n <= 0) return false; dst += n; size -= n; }
     return size == 0;
 }
-static void clearPicture() {
-    { std::lock_guard<std::mutex> g(lockFrame); picture.reset(); }
+// Preserve the last valid image through transient disconnections.
+// It remains visibly marked as stale until a new frame arrives.
+static void updateLink(bool connected) {
+    linkConnected.store(connected);
     PostMessage(windowHandle, WM_APP, 0, 0);
 }
 static void discoveryLoop() {
@@ -83,25 +87,36 @@ static void receiveLoop() {
             if (n == 0 || n > 8 * 1024 * 1024) break;
             std::vector<unsigned char> bytes(n);
             if (!readExact(s, reinterpret_cast<char*>(bytes.data()), static_cast<int>(n))) break;
+            // A single malformed/incomplete MJPEG frame must NOT tear down the TCP
+            // session. The USB grabber can occasionally emit one bad JPEG.
+            // ACK that packet so Android can immediately send its newest frame.
+            bool imageReady = false;
             IStream* stream = SHCreateMemStream(bytes.data(), n);
-            if (!stream) break;
-            {
-                Bitmap decoded(stream);
-                if (decoded.GetLastStatus() == Ok && decoded.GetWidth() <= 4096 && decoded.GetHeight() <= 4096) {
-                    std::unique_ptr<Bitmap> copy(decoded.Clone(0, 0, decoded.GetWidth(), decoded.GetHeight(), PixelFormat32bppRGB));
-                    if (copy && copy->GetLastStatus() == Ok) {
-                        std::lock_guard<std::mutex> g(lockFrame); picture = std::move(copy);
-                    } else valid = false;
-                } else valid = false;
+            if (stream) {
+                {
+                    Bitmap decoded(stream);
+                    if (decoded.GetLastStatus() == Ok &&
+                        decoded.GetWidth() > 0 && decoded.GetHeight() > 0 &&
+                        decoded.GetWidth() <= 4096 && decoded.GetHeight() <= 4096) {
+                        std::unique_ptr<Bitmap> copy(decoded.Clone(0, 0, decoded.GetWidth(),
+                            decoded.GetHeight(), PixelFormat32bppRGB));
+                        if (copy && copy->GetLastStatus() == Ok) {
+                            std::lock_guard<std::mutex> g(lockFrame);
+                            picture = std::move(copy);
+                            imageReady = true;
+                        }
+                    }
+                }
+                stream->Release();
             }
-            stream->Release();
-            if (!valid) break;
+            if (!imageReady) rejectedFrames.fetch_add(1);
+            else linkConnected.store(true);
             PostMessage(windowHandle, WM_APP, 0, 0);
             const char ack = 0x06;
             if (send(s, &ack, 1, 0) != 1) break;
         }
         { std::lock_guard<std::mutex> g(lockSocket); closesocket(s); peer = INVALID_SOCKET; }
-        clearPicture();
+        updateLink(false);
     }
 }
 static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
@@ -112,6 +127,9 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             std::lock_guard<std::mutex> g(lockFrame);
             if (picture) title += L" - " + std::to_wstring(picture->GetWidth()) + L" x " + std::to_wstring(picture->GetHeight());
         }
+        if (!linkConnected.load()) title += L" [reconnecting / last frame]";
+        auto bad = rejectedFrames.load();
+        if (bad) title += L" [skipped " + std::to_wstring(bad) + L" bad frames]";
         static std::wstring lastTitle;
         if (title != lastTitle) { SetWindowText(hwnd, title.c_str()); lastTitle = title; }
         InvalidateRect(hwnd, nullptr, FALSE); return 0;
@@ -147,9 +165,20 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                         graphics.Flush(FlushIntentionSync);
                     } else {
                         SetBkMode(back, TRANSPARENT); SetTextColor(back, RGB(210,210,210));
-                        wchar_t text[] = L"My Cast Receiver 011\nWaiting on TCP 57007\n\nPixel: Auto discover or IPv4 + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Video only";
+                        wchar_t text[] = L"My Cast Receiver 012\nWaiting on TCP 57007\n\nPixel: Auto discover or IPv4 + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Video only";
                         DrawText(back, text, -1, &r, DT_CENTER | DT_WORDBREAK);
                     }
+                }
+                if (!linkConnected.load()) {
+                    // Make stale frames explicit in OBS instead of silently holding them.
+                    RECT labelRect{0, 0, (std::min)(r.right, 540L), 34};
+                    HBRUSH dim = CreateSolidBrush(RGB(50, 36, 15));
+                    FillRect(back, &labelRect, dim);
+                    DeleteObject(dim);
+                    SetBkMode(back, TRANSPARENT);
+                    SetTextColor(back, RGB(255, 221, 137));
+                    DrawText(back, L"Connection lost - waiting for automatic reconnect", -1,
+                        &labelRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
                 }
                 BitBlt(dc, 0, 0, r.right, r.bottom, back, 0, 0, SRCCOPY);
                 SelectObject(back, previous);
@@ -175,7 +204,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if(listener != INVALID_SOCKET) closesocket(listener);
         GdiplusShutdown(token); WSACleanup(); return 1;
     }
-    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver011"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver012"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIcon(instance, MAKEINTRESOURCE(101));
     RegisterClass(&wc);
     // Actual VIDEO CLIENT AREA must be 1920x1080, excluding the window chrome.

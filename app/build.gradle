@@ -13,7 +13,7 @@ android {
             }
         }
     }
-    defaultConfig { applicationId 'com.karinlab.mymonitor'; minSdk 26; targetSdk 28; versionCode 11; versionName '0.11' }
+    defaultConfig { applicationId 'com.karinlab.mymonitor'; minSdk 26; targetSdk 28; versionCode 12; versionName '0.12' }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = '17' }
     packaging { jniLibs { useLegacyPackaging = true } }

@@ -13,12 +13,12 @@ u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctyp
 u.SendMessageW.restype = ctypes.c_ssize_t
 u.PostMessageW.argtypes = u.SendMessageW.argtypes
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-process = subprocess.Popen([str(Path('mycastreceiver011.exe').resolve())])
+process = subprocess.Popen([str(Path('mycastreceiver012.exe').resolve())])
 try:
     deadline = time.monotonic() + 15
     hwnd = None
     while time.monotonic() < deadline:
-        hwnd = u.FindWindowW('MyCastReceiver011', None)
+        hwnd = u.FindWindowW('MyCastReceiver012', None)
         if hwnd: break
         time.sleep(.1)
     assert hwnd, 'Receiver window not created'
@@ -63,9 +63,33 @@ try:
             time.sleep(.1)
         assert '1920 x 1080' in title.value, title.value
         print(f'Full HD ACK: mean={sum(times)/len(times):.1f}ms max={max(times):.1f}ms (loopback; not Wi-Fi latency)')
+        # One corrupt MJPEG frame must be ACKed/skipped, not destroy the stream.
+        bad = b'broken-JPEG-no-SOI'
+        s.sendall(struct.pack('!I', len(bad)) + bad)
+        assert s.recv(1) == b'\x06', 'Bad JPEG broke streaming connection'
+        s.sendall(packet)
+        assert s.recv(1) == b'\x06', 'Good frame not accepted after corrupt JPEG'
+        for _ in range(30):
+            u.GetWindowTextW(hwnd, title, 256)
+            if 'skipped 1 bad frames' in title.value: break
+            time.sleep(.1)
+        assert 'skipped 1 bad frames' in title.value, title.value
+        print('Corrupt MJPEG skipped with ACK, next valid frame accepted: PASS')
+    # Sender vanished: retain LAST good frame and signal link loss.
+    for _ in range(30):
+        u.GetWindowTextW(hwnd, title, 256)
+        if 'reconnecting' in title.value: break
+        time.sleep(.1)
+    assert 'reconnecting' in title.value and '1920 x 1080' in title.value, title.value
+    print('Connection loss preserves last Full HD image metadata: PASS')
     with socket.create_connection(('127.0.0.1', 57007), timeout=3) as s:
         s.sendall(b'MMC9' + packet)
         assert s.recv(1) == b'\x06', 'Reconnect failed'
+        for _ in range(30):
+            u.GetWindowTextW(hwnd, title, 256)
+            if 'reconnecting' not in title.value: break
+            time.sleep(.1)
+        assert 'reconnecting' not in title.value, title.value
     with socket.create_connection(('127.0.0.1', 57007), timeout=3) as s:
         s.sendall(b'MMC9' + struct.pack('!I', 9*1024*1024))
         try: assert s.recv(1) == b'', 'Oversized frame accepted'

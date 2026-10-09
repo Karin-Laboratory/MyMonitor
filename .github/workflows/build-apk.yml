@@ -34,25 +34,25 @@ jobs:
           python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
       - name: Build bundled native UVC and APK
         run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor011.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor012.apk
       - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix python3-cairosvg python3-pil
       - name: Embed matching Android icon and compile standalone EXE
         run: |
           /usr/bin/python3 scripts/make_windows_icon.py
           cd windows
           x86_64-w64-mingw32-windres receiver.rc -O coff -o receiver-res.o
-          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver011.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
+          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver012.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
       - name: Check packages and checksums
         run: |
-          test -s mymonitor011.apk
-          file mycastreceiver011.exe | grep 'PE32+'
-          sha256sum mymonitor011.apk mycastreceiver011.exe > SHA256SUMS.txt
+          test -s mymonitor012.apk
+          file mycastreceiver012.exe | grep 'PE32+'
+          sha256sum mymonitor012.apk mycastreceiver012.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor011
+          name: mymonitor012
           path: |
-            mymonitor011.apk
-            mycastreceiver011.exe
+            mymonitor012.apk
+            mycastreceiver012.exe
             TRANSFER.md
             SHA256SUMS.txt
   windows-test:
@@ -62,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor011 }
+        with: { name: mymonitor012 }
       - name: Test actual EXE with Full HD images
         shell: pwsh
         run: |
@@ -75,21 +75,26 @@ jobs:
           $image.Dispose()
           python windows/smoke_test.py test.jpg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Two-minute stream soak with bad frames and reconnects
+        shell: pwsh
+        run: |
+          python windows/soak_test.py test.jpg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   publish:
     needs: windows-test
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor011 }
+        with: { name: mymonitor012 }
       - name: Publish verified downloads
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.11 >/dev/null 2>&1; then
-            gh release upload v0.11 mymonitor011.apk mycastreceiver011.exe TRANSFER.md SHA256SUMS.txt --clobber
+          if gh release view v0.12 >/dev/null 2>&1; then
+            gh release upload v0.12 mymonitor012.apk mycastreceiver012.exe TRANSFER.md SHA256SUMS.txt --clobber
           else
-            gh release create v0.11 mymonitor011.apk mycastreceiver011.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 011 + Low-latency Windows Receiver' --notes 'MJPEG passthrough (NV21 fallback), LAN UDP receiver discovery, 1920x1080 client startup, one-frame ACK and Full HD. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
+            gh release create v0.12 mymonitor012.apk mycastreceiver012.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 012 + Low-latency Windows Receiver' --notes 'MJPEG passthrough, automatic Android TCP reconnection, tolerance for individual corrupt JPEGs, frozen-frame indicator on disconnect, LAN discovery, Full HD, Windows soak-tested. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
           fi
