@@ -27,25 +27,25 @@ jobs:
             keytool -genkeypair -keystore .signing/debug.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
           fi
       - run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor009.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor010.apk
       - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix python3-cairosvg python3-pil
       - name: Embed matching Android icon and compile standalone EXE
         run: |
           /usr/bin/python3 scripts/make_windows_icon.py
           cd windows
           x86_64-w64-mingw32-windres receiver.rc -O coff -o receiver-res.o
-          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../MyCastReceiver.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
+          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver010.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
       - name: Check packages and checksums
         run: |
-          test -s mymonitor009.apk
-          file MyCastReceiver.exe | grep 'PE32+'
-          sha256sum mymonitor009.apk MyCastReceiver.exe > SHA256SUMS.txt
+          test -s mymonitor010.apk
+          file mycastreceiver010.exe | grep 'PE32+'
+          sha256sum mymonitor010.apk mycastreceiver010.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor009
+          name: mymonitor010
           path: |
-            mymonitor009.apk
-            MyCastReceiver.exe
+            mymonitor010.apk
+            mycastreceiver010.exe
             TRANSFER.md
             SHA256SUMS.txt
   windows-test:
@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor009 }
+        with: { name: mymonitor010 }
       - name: Test actual EXE with Full HD images
         shell: pwsh
         run: |
@@ -74,15 +74,15 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor009 }
+        with: { name: mymonitor010 }
       - name: Publish verified downloads
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.09 >/dev/null 2>&1; then
-            gh release upload v0.09 mymonitor009.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --clobber
+          if gh release view v0.10 >/dev/null 2>&1; then
+            gh release upload v0.10 mymonitor010.apk mycastreceiver010.exe TRANSFER.md SHA256SUMS.txt --clobber
           else
-            gh release create v0.09 mymonitor009.apk MyCastReceiver.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 009 + Low-latency Windows Receiver' --notes 'Full HD, latest-frame replacement and one-frame ACK flow control; up to 15fps, JPEG quality 75, video only. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
+            gh release create v0.10 mymonitor010.apk mycastreceiver010.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 010 + Low-latency Windows Receiver' --notes 'Full HD, latest-frame replacement and one-frame ACK flow control; up to 30fps, JPEG quality 75, video only. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
           fi

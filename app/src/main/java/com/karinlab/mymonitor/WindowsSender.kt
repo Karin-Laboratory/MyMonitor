@@ -24,7 +24,7 @@ class WindowsSender(private val report: (String) -> Unit) {
         if (!running.get() || width <= 0 || height <= 0 || width > 4096 || height > 4096) return
         if (data.size != width * height * 3 / 2) return
         val now = SystemClock.elapsedRealtime()
-        if (now - lastSent < 66L) return
+        if (now - lastSent < 33L) return
         lastSent = now
         // Replace an older waiting frame rather than preserving its latency.
         frames.poll()
@@ -47,7 +47,9 @@ class WindowsSender(private val report: (String) -> Unit) {
                     out.writeBytes("MMC9")
                     report("Windows接続済み・映像送信中")
                     while (running.get()) {
-                        val frame = frames.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+                        var frame = frames.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+                        // Prefer the newest frame even if one arrived after the blocking poll.
+                        while (true) { frame = frames.poll() ?: break }
                         run {
                             val bytes = ByteArrayOutputStream()
                             check(YuvImage(frame.data, ImageFormat.NV21, frame.width, frame.height, null)

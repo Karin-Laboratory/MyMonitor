@@ -105,7 +105,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                         graphics.Flush(FlushIntentionSync);
                     } else {
                         SetBkMode(back, TRANSPARENT); SetTextColor(back, RGB(210,210,210));
-                        wchar_t text[] = L"My Cast Receiver 009\nWaiting on TCP 57007\n\nPixel: Windows IPv4 address + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Video only";
+                        wchar_t text[] = L"My Cast Receiver 010\nWaiting on TCP 57007\n\nPixel: Windows IPv4 address + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Video only";
                         DrawText(back, text, -1, &r, DT_CENTER | DT_WORDBREAK);
                     }
                 }
@@ -133,7 +133,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if(listener != INVALID_SOCKET) closesocket(listener);
         GdiplusShutdown(token); WSACleanup(); return 1;
     }
-    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver009"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver010"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIcon(instance, MAKEINTRESOURCE(101));
     RegisterClass(&wc);
     windowHandle = CreateWindow(wc.lpszClassName, L"My Cast Receiver", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 760, nullptr, nullptr, instance, nullptr);
