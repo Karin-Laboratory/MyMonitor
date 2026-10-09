@@ -17,17 +17,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.11.1' }
       - run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor005.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor006.apk
       - uses: actions/upload-artifact@v4
-        with: { name: mymonitor005, path: mymonitor005.apk }
+        with: { name: mymonitor006, path: mymonitor006.apk }
       - name: Publish downloadable APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.05 >/dev/null 2>&1; then
-            gh release upload v0.05 mymonitor005.apk --clobber
+          if gh release view v0.06 >/dev/null 2>&1; then
+            gh release upload v0.06 mymonitor006.apk --clobber
           else
-            gh release create v0.05 mymonitor005.apk \
-              --title "My Monitor v0.05" \
-              --notes "Alpha: normalized video filenames, encrypted saved SMB credentials, monitor icon, two-tone record button. Device test pending."
+            gh release create v0.06 mymonitor006.apk \
+              --title "My Monitor v0.06" \
+              --notes "Alpha: transient messages expire after 7 seconds; red recording status stays visible until recording stops. Device test pending."
           fi
