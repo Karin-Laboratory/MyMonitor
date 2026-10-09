@@ -21,6 +21,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v0.1.${GITHUB_RUN_NUMBER}" mymonitor.apk \
-            --title "My Monitor dev build ${GITHUB_RUN_NUMBER}" \
+          gh release create "v0.02" mymonitor.apk \
+            --title "My Monitor v0.02" \
             --notes "Development APK. UVC hardware and SMB storage need device testing."
