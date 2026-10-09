@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Soft mint background and chubby retro screen -->
+    <path android:fillColor="#B8F3E7" android:pathData="M54,3 C82,3 105,26 105,54 C105,82 82,105 54,105 C26,105 3,82 3,54 C3,26 26,3 54,3 Z"/>
+    <path android:fillColor="#366B83" android:pathData="M27,25 Q21,25 21,33 L21,70 Q21,78 29,78 L79,78 Q87,78 87,70 L87,33 Q87,25 79,25 Z"/>
+    <path android:fillColor="#FFF5E8" android:pathData="M29,31 L79,31 Q81,31 81,34 L81,67 Q81,71 77,71 L31,71 Q27,71 27,67 L27,34 Q27,31 29,31 Z"/>
+    <path android:fillColor="#C6E8F3" android:pathData="M31,35 L77,35 L77,63 L31,63 Z"/>
+    <!-- Eyes and smile -->
+    <path android:fillColor="#32526E" android:pathData="M42,44 a3.5,4.3 0,1 0,7 0 a3.5,4.3 0,1 0,-7 0"/>
+    <path android:fillColor="#32526E" android:pathData="M59,44 a3.5,4.3 0,1 0,7 0 a3.5,4.3 0,1 0,-7 0"/>
+    <path android:strokeColor="#32526E" android:strokeWidth="2.5" android:strokeLineCap="round" android:fillColor="@android:color/transparent"
+        android:pathData="M46,54 Q54,61 62,54"/>
+    <path android:fillColor="#FCABAD" android:pathData="M34,52 a5,2.8 0,1 0,10 0 a5,2.8 0,1 0,-10 0"/>
+    <path android:fillColor="#FCABAD" android:pathData="M64,52 a5,2.8 0,1 0,10 0 a5,2.8 0,1 0,-10 0"/>
+    <!-- Monitor foot -->
+    <path android:fillColor="#366B83" android:pathData="M49,78 L59,78 L59,85 L68,85 Q72,85 72,89 L72,91 L36,91 L36,89 Q36,85 40,85 L49,85 Z"/>
+    <path android:fillColor="#F5CE75" android:pathData="M75,69 a3,3 0,1 0,6 0 a3,3 0,1 0,-6 0"/>
+</vector>
