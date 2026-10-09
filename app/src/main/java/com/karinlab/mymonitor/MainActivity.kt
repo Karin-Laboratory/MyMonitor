@@ -206,7 +206,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     } catch (e: Exception) {
                         showStatus("SMB資格情報の保存に失敗: ${e.message}")
-                    } finally { entered.fill('\\u0000') }
+                    } finally { entered.fill('\u0000') }
                 }
             }.show()
     }
