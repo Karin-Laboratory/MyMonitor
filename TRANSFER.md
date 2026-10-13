@@ -1,54 +1,82 @@
-# MyMonitor 015 / MyCastReceiver 015
+# MyMonitor v0.16 + MyCastReceiver v0.16
 
-## Goal: reduce the ~0.5 second Android-preview-to-Windows display delay
+## Purpose
 
-The physical UVC capture and Android preview are already responsive in the user's setup. V015 therefore keeps Wi-Fi/TCP and the proven MJPEG protocol, focusing on **Windows JPEG decode, copy, paint and Android's stop-and-wait ACK dependency**. Improvements are measurable but actual end-to-end delay still requires a real-device comparison.
+One Android APK automatically switches input between USB UVC/HDMI capture and Android screen; one low-latency Windows x64 EXE receives the selected video and any eligible Android internal audio.
 
-### Findings in v014
+User-verified v015 low-latency keyboard performance is deliberately preserved. V016 is a lifecycle, source arbitration, pairing, notification and recording consistency release, not another codec/transport change.
 
-- Windows used SHCreateMemStream -> GDI+ JPEG decode -> Bitmap.Clone, all on the TCP receive thread, then ACKed. This serialized the Android sender behind receiver-side decompression/allocation.
-- Each WM_PAINT made a new Full HD-compatible bitmap, painted a black backing image, called GDI+ DrawImage, then BitBlt to the actual window. The UI work could lag behind the next packet and required repeated 1920x1080 intermediate images.
-- The v014 Android sender was latest-frame-wins but could not send another frame until the Windows JPEG decoder had returned its ACK. That coupling is removed.
+## Download and upgrade
 
-### Changes implemented in v015
+- mymonitor016.apk (same Android app ID, cached signing key). Update in place; do not uninstall first if you want to retain saved receiver IPv4, SMB credentials and SAF folder access.
+- mycastreceiver016.exe (single Windows EXE). Stop 015.exe before opening 016.exe because only one instance can listen on the network ports.
+- Previous rollback: https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.15
+- Full specification audit and acceptance checklist: SPEC_AUDIT_016.md in the repository and attached release.
 
-1. **ACK immediately after receipt of a bounded complete JPEG packet** (still TCP 57007, MMC9, ACK 0x06). The ACK means *packet received*, not successful JPEG decode or screen paint.
-2. A dedicated Windows decode thread handles packets through a **one-slot latest-frame queue**. Frames that wait while a newer packet arrives are discarded, preventing growing display latency.
-3. Windows GDI+ only decodes JPEG and exposes its raw pixels. Pixels are copied into a 32-bit top-down GDI DIB. Windows uses native BitBlt for 1:1 video (e.g. Full HD) and StretchBlt for resized windows. The old Bitmap.Clone and full-screen offscreen compatible bitmap per paint were removed.
-4. The video HBITMAP is reference-counted. WM_PAINT snapshots it without holding the decoder's mutex for the duration of drawing. The last successfully decoded image persists on disconnect.
-5. Windows title reports receiver-stage timings, refreshed about once per second: **rx ms** (time to receive full JPEG), **decode ms**, **draw ms**, **decoded** and **dropped** image counts. These are local processing measurements, not total glass-to-glass latency.
-6. Android logcat has a **MyMonitorLatency** line every ~5 seconds with frame count, avg_queue_ms, avg_write_ms, avg_ack_wait_ms and max_ack_wait_ms. ACK measurement now excludes Windows JPEG decoding.
-7. v014 authenticated receiver discovery, TCP identity proof, UVC first/source arbitration, screen capture, recording, SMB export, 7-second static-screen heartbeat, PCM internal audio, watchdog and automatic reconnection are retained.
+Use the Windows Private network firewall profile to allow UDP 57008 (discovery), TCP 57007 (MJPEG/identity probe), TCP 57009 (eligible Android playback audio). Never expose them to the public Internet.
 
-### Safety and video behavior
+## Source preference and UI
 
-- Corrupt JPEGs are ACKed then rejected asynchronously; the next good frame must recover. The decoder may legitimately skip a corrupt JPEG that is replaced while it waits in the latest-only queue. Dropped != corrupted.
-- TCP input sizes are bounded to 8 MiB and decoded dimensions to 4096x4096. At most one waiting compressed packet is retained, plus the JPEG currently decoding and one displayed DIB.
-- The direct GDI paint path intentionally favors latency over high-quality resampling when the window is resized. 1:1 display uses BitBlt without filtering.
-- The existing one-connection receiver, frozen last frame on disconnect and visual warning remain.
-- The Windows receiver retains legacy MMC9 video compatibility. For verified discovery and zero-frame heartbeat, use a matching v014/v015 sender and receiver.
+| State | Behavior |
+|---|---|
+| UVC OPENED | Show UVC preview on Android and send UVC MJPEG to the verified Windows receiver |
+| UVC physically detached, MediaProjection still active | Close UVC, discard old queued UVC JPEG, automatically return to Android home and send the native Android screen; audio follows the screen |
+| UVC detached, screen-sharing permission invalid/absent | Request Android's current-session screen-sharing consent if the Activity is foreground and streaming was requested; if not available, tap the ongoing notification to authorize |
+| Screen-sharing consent denied | Respect denial and do not repeatedly trigger dialogs; tap the foreground notification later to retry |
+| UVC connected again | USB attached intent/USB permission, preview becomes available and takes priority without selecting a "mode" |
+| Phone portrait/landscape | MediaProjection resizes live video with aspect ratio preserved, up to 1080x1920 / 1920x1080 |
+| Receiver absent | Local preview, photo and MP4 recording still work; reconnect discovery continues |
+| Notification "送信停止" | Stops video/audio transport but does NOT stop an active local screen MP4 recording |
+| Notification "送信再開" | Rechecks remembered Windows IPv4 / broadcast and resumes the existing capture source |
+| Notification "● 録画" / "録画停止" | Controls current source's MP4 recording |
+| Notification "終了" | Stops service, projection and network; attempts MP4 finalization |
 
-### Installation / verification
+## Receiver auto-connection
 
-1. Close all prior Windows receiver processes; run **mycastreceiver015.exe** on the Windows PC. It listens on TCP 57007 (JPEG + V2 identity proof), TCP 57009 (audio), UDP 57008 (discovery). Allow only on the Private LAN.
-2. Update Android in-place to **mymonitor015.apk**. UVC/capture/recording settings and SMB credentials should remain intact with the cached signing key; do not uninstall first.
-3. Automatic discovery is unchanged from v014, and the user's LAN currently requires manual IP selection. If discovery finds no receiver, use **Windowsへ転送** and enter the actual PC IPv4; v015 probes the Windows process before saving.
-4. To compare v014 vs v015, show the same UVC output side by side on the Android preview and Windows display. Move a cursor or type while observing lag. Use the EXE window title's **rx/decode/draw** and Android logcat's **MyMonitorLatency** to distinguish processing and ACK delay.
-5. Prefer the initial 1920x1080 client area for the fastest BitBlt path. Scaling uses native StretchBlt rather than expensive GDI+ resampling. OBS Window Capture is unchanged.
+V016 ALWAYS tries the last successfully validated IPv4 + TCP port by connecting directly with MCP1/MCR1 receiver proof before using UDP broadcast discovery. A DHCP server or stale IP does not qualify.
 
-### CI regression suite
+This directly addresses the user's home LAN, where manual IPv4 entry succeeded but broadcasts did not. The phone can reconnect to that same Windows PC without relying on UDP broadcasts after it has been paired once.
 
-- Pinned libuvc/native Android debug APK and statically linked x64 EXE compilation.
-- V2 UDP nonce and TCP MCP1/MCR1 proof plus fake DHCP response rejection.
-- Existing Full HD JPEG, corrupt-frame skip, static heartbeat, reconnect and icon tests.
-- New 140-frame burst ACK/decode/paint diagnostics regression (explicit loopback latency threshold).
-- PCM audio test and a 650-frame, >2-minute reconnect/corrupt-frame soak.
-- Both release files SHA-256 verified before upload.
+If remembered Windows has moved to a different IP, phone falls back to nonce-protected UDP V2 discovery: two sends, all per-interface broadcast addresses + 255.255.255.255, temporary Android multicast lock, and 2.2s receive window. Every UDP response must still pass the direct TCP proof.
 
-CI's loopback ACK timings are **not** the same as the user's ~0.5 second end-to-end Wi-Fi/monitor lag. Reduction is a hypothesis until demonstrated on their real hardware. Existing v014 release remains available for immediate rollback: https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.14
+The picker shows all verified receivers plus an active already-verified receiver, even though TCP identity probing cannot run concurrently with a running one-client video connection.
 
-## Source and release
+**Limit:** First-time discovery can still fail if a router/SSID/VLAN or firewall filters broadcast; type the actual Windows PC IPv4 one time in "Windowsへ転送". Save occurs only after actual receiver reply.
 
-- Source: https://github.com/Karin-Laboratory/MyMonitor
-- Android: mymonitor015.apk
-- Windows: mycastreceiver015.exe
+## Recording
+
+- UVC: existing captureImage/captureVideoStart/captureVideoStop; video-only MP4. Finalized recordings are saved locally first and then asynchronously exported to SAF folder and/or SMB. Export failures keep the original.
+- Android native screen: MediaProjection ImageReader, H.264 video, eligible internal audio AAC (or video-only if no audio); MP4 on Android, export to configured folder/SMB after finalization.
+- Network sending and local recording are independent; pressing "送信停止" will no longer starve native screen recording of video frames.
+- Changing from native screen recording to UVC attempts to finish screen MP4 and opens a separate UVC MP4. Unplugging a UVC device during recording attempts video stop and a separate native screen MP4 after consent, but the old USB recording can be lost if hardware disappears before the MP4 container is finalized.
+
+## Notification & Android permissions
+
+- Foreground notification includes source/recording state, record toggle, stream stop/resume and exit.
+- Android 13+ may require POST_NOTIFICATIONS; allow it to use the notification controls.
+- Android MediaProjection permission is per session. It is NEVER silently bypassed or reused after the session is stopped; screen lock, user stop or OS projection replacement can invalidate permission.
+- USB auto-foreground display depends on Android and the user accepting the USB-attach permission prompt. This is not guaranteed when OS background Activity restrictions apply.
+- When UVC Activity goes to background, its TextureView-owned camera preview stops; true headless UVC recording is outside v016 scope.
+
+## Verification
+
+The v016 CI runs:
+1. Source-level specification contract test.
+2. JUnit Android host tests for input priority/USB lifecycle and receiver selection.
+3. Direct-TCP fake receiver/false DHCP tests, including rediscovery of a saved receiver without UDP broadcast.
+4. Android native UVC + APK build and Windows x64 static EXE build.
+5. Live Windows EXE Full HD, JPEG decode timing, 140-frame rapid ACK, V2 UDP/TCP receiver proof, audio TCP, heartbeat, corrupted JPEG and reconnection, plus >2-minute soak.
+6. SHA-256 checks before release publication.
+
+GitHub Actions cannot validate the actual phone, USB dongle, Android background-launch constraints, Wi-Fi latency or user's Windows firewall. Those require on-device testing.
+
+## Real-device acceptance checklist
+
+1. With 016.exe running, restart 016.apk. It should reconnect directly to the Windows IP last used successfully.
+2. Allow screen sharing, then insert UVC. The UVC preview must take priority; Windows should show UVC without manual mode selection.
+3. Unplug UVC with valid screen sharing; phone returns to native home and Windows displays native screen. With invalid sharing, grant consent once through Activity or notification. Denying must not loop.
+4. Record with stream stopped, then resume stream without stopping the local MP4.
+5. Check notification stop/resume/record/exit and folder/SMB exports.
+6. Confirm keyboard responsiveness matches v015 and that portrait/landscape and a transient Wi-Fi outage recover.
+
+The full v016 audit is in SPEC_AUDIT_016.md.

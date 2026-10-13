@@ -34,6 +34,12 @@ class WindowsSender(private val report: (String) -> Unit) {
     @Volatile private var connected = false
 
     fun isRunning() = running.get()
+    /** Clear a UVC JPEG queued before the screen source became active, or vice versa. */
+    @Synchronized fun discardPending() {
+        frames.clear()
+        lastMjpeg = 0L
+        lastOffered = 0L
+    }
     /** True only after the remote receiver ACKed an actual video frame. */
     fun isConnected() = connected
     fun awaitStopped(timeoutMs: Long = 2500) {

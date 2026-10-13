@@ -102,10 +102,24 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         }
                     }
                     override fun onDisconnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
-                        host()?.runOnUiThread { closeCamera(); status("USB切断") }
+                        host()?.runOnUiThread {
+                            if (device != null && isUvc(device) &&
+                                (currentDeviceId == null || currentDeviceId == device.deviceId)) {
+                                val wasRecording = recording
+                                closeCamera()
+                                host()?.onUvcGone(wasRecording)
+                                status("USB切断")
+                            }
+                        }
                     }
                     override fun onDetach(device: UsbDevice?) {
-                        host()?.runOnUiThread { closeCamera(); waitingForPermission = false; status("USB機器を取り外しました") }
+                        host()?.runOnUiThread {
+                            if (device != null && isUvc(device) &&
+                                (currentDeviceId == null || currentDeviceId == device.deviceId)) {
+                                usbDetached()
+                                status("USB機器を取り外しました")
+                            }
+                        }
                     }
                     override fun onCancel(device: UsbDevice?) {
                         host()?.runOnUiThread { waitingForPermission = false; status("USB機器へのアクセスが許可されませんでした。USB確認から再試行") }
@@ -117,12 +131,18 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         } catch (e: Exception) { status("USB初期化失敗: ${e.message}") }
     }
 
+    fun updateSurfaceSize() {
+        if (viewReady && ::preview.isInitialized && ready)
+            camera?.setRenderSize(preview.width, preview.height)
+    }
+
     fun refreshUsb() {
         if (!isAdded || !viewReady) return
         val manager = requireContext().getSystemService(Context.USB_SERVICE) as UsbManager
         val devices = manager.deviceList.values.filter(::isUvc)
         if (devices.isEmpty()) {
-            status("UVC機器が見つかりません。USB確認でVID/PIDを表示")
+            if (camera != null || ready) usbDetached()
+            else status("UVCなし。スマホ画面入力を利用できます")
             return
         }
         if (camera != null || waitingForPermission) return
@@ -206,7 +226,23 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     }
     fun stopWindows() { StreamHub.stopStreaming(); status("Windows転送停止") }
 
+    /** Physical unplug path. Different from onStop, which only pauses preview. */
+    fun usbDetached() {
+        val wasRecording = recording
+        closeCamera()
+        waitingForPermission = false
+        host()?.onUvcGone(wasRecording)
+    }
+
     private fun closeCamera() {
+        if (recording && !stopping) {
+            // Best effort: finish the current MP4 before closing an unplugged
+            // UVC device. The hardware may be already unavailable.
+            stopping = true
+            try { camera?.captureVideoStop() } catch (e: Exception) {
+                status("USB切断中の録画終了に失敗: ${e.message}")
+            }
+        }
         StreamHub.setUvcReady(false)
         ready = false
         recording = false

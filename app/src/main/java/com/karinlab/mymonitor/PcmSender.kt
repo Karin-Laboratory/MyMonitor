@@ -15,6 +15,11 @@ class PcmSender {
     @Volatile private var socket: Socket? = null
     @Volatile private var thread: Thread? = null
     fun isRunning() = running.get()
+    fun awaitStopped(timeoutMs: Long = 2500) {
+        val previous = thread
+        if (previous != null && previous !== Thread.currentThread())
+            try { previous.join(timeoutMs) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+    }
     fun offer(bytes: ByteArray, size: Int) {
         if (!running.get() || size <= 0 || size > 38400 || size % 4 != 0) return
         if (chunks.remainingCapacity() == 0) chunks.poll()

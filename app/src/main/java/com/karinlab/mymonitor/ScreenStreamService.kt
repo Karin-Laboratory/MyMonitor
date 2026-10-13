@@ -28,7 +28,12 @@ class ScreenStreamService : Service() {
         const val ACTION_PROJECTION = "com.karinlab.mymonitor.PROJECTION"
         const val ACTION_RECORD = "com.karinlab.mymonitor.RECORD"
         const val ACTION_STOP_STREAM = "com.karinlab.mymonitor.STOP_STREAM"
+        const val ACTION_RESUME_STREAM = "com.karinlab.mymonitor.RESUME_STREAM"
+        const val ACTION_SOURCE_CHANGED = "com.karinlab.mymonitor.SOURCE_CHANGED"
+        const val ACTION_STOP_SCREEN_RECORD = "com.karinlab.mymonitor.STOP_SCREEN_RECORD"
         const val ACTION_EXIT = "com.karinlab.mymonitor.EXIT"
+        @Volatile var screenRecording = false
+            private set
         @Volatile var projectionActive = false
             private set
     }
@@ -47,6 +52,7 @@ class ScreenStreamService : Service() {
     private val alive = java.util.concurrent.atomic.AtomicBoolean(true)
     private val main = Handler(Looper.getMainLooper())
     private var lastNotification = ""
+    private var lastReceiverCount = 0
 
     override fun onBind(intent: Intent?) = null
 
@@ -58,14 +64,11 @@ class ScreenStreamService : Service() {
         startForegroundWithType(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         Thread({
             while (alive.get()) {
-                if (StreamHub.enabled) {
-                    val count = StreamHub.scanAndConnect()
-                    if (count > 0 && !projectionActive && !StreamHub.uvcReady)
-                        notifyState("Windows受信機の実在を確認。タップして画面共有を許可")
-                    else if (projectionActive && StreamHub.sender.isConnected())
-                        notifyState(if (StreamHub.uvcReady) "UVC映像を送信中" else "Android画面・内部音声を送信中")
-                    else if (count > 1 && StreamHub.selectedHost == null)
-                        notifyState("受信機が複数。アプリで接続先を選択")
+                try {
+                    if (StreamHub.enabled) lastReceiverCount = StreamHub.scanAndConnect()
+                    refreshNotification()
+                } catch (e: Exception) {
+                    android.util.Log.w("MyMonitorState", "Discovery loop: " + e.message)
                 }
                 try { Thread.sleep(6000) } catch (_: InterruptedException) { break }
             }
@@ -74,7 +77,8 @@ class ScreenStreamService : Service() {
 
     private fun intentForActivity(): PendingIntent {
         val intent = Intent(this, MainActivity::class.java).apply {
-            action = "com.karinlab.mymonitor.GRANT_SCREEN"
+            action = if (!StreamHub.uvcReady && !projectionActive)
+                "com.karinlab.mymonitor.GRANT_SCREEN" else "com.karinlab.mymonitor.OPEN"
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         return PendingIntent.getActivity(this, 11, intent,
@@ -95,13 +99,15 @@ class ScreenStreamService : Service() {
         } else serviceAction(ACTION_RECORD, 21)
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_monitor)
-            .setContentTitle("MyMonitor 014")
+            .setContentTitle("MyMonitor 016")
             .setContentText(text)
             .setContentIntent(intentForActivity())
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, if (recorder?.isRecording() == true || StreamHub.uvcRecording) "録画停止" else "● 録画",
                 recordIntent).build())
-            .addAction(Notification.Action.Builder(null, "送信停止", serviceAction(ACTION_STOP_STREAM, 22)).build())
+            .addAction(Notification.Action.Builder(null,
+                if (StreamHub.enabled) "送信停止" else "送信再開",
+                serviceAction(if (StreamHub.enabled) ACTION_STOP_STREAM else ACTION_RESUME_STREAM, 22)).build())
             .addAction(Notification.Action.Builder(null, "終了", serviceAction(ACTION_EXIT, 23)).build())
         return builder.build()
     }
@@ -113,10 +119,27 @@ class ScreenStreamService : Service() {
         else startForeground(notificationId, notification(message))
     }
 
-    private fun notifyState(message: String) {
-        if (message == lastNotification) return
+    private fun notifyState(message: String, force: Boolean = false) {
+        if (message == lastNotification && !force) return
         lastNotification = message
         getSystemService(NotificationManager::class.java).notify(notificationId, notification(message))
+    }
+
+    private fun refreshNotification() {
+        val current = when {
+            screenRecording -> "● Android画面を録画中" +
+                if (StreamHub.enabled && StreamHub.sender.isConnected()) "・送信中" else ""
+            StreamHub.uvcRecording -> "● UVC映像を録画中"
+            !StreamHub.enabled -> "送信停止中（録画は利用できます）"
+            StreamHub.uvcReady && StreamHub.sender.isConnected() -> "UVC映像をWindowsへ送信中"
+            StreamHub.uvcReady -> "UVC表示中・受信機を検索中"
+            projectionActive && StreamHub.sender.isConnected() -> "Android画面と内部音声を送信中"
+            projectionActive -> "画面共有中・Windows受信機を検索中"
+            lastReceiverCount > 1 && StreamHub.selectedHost == null -> "受信機が複数。アプリで選んでください"
+            StreamHub.selectedHost != null -> "受信機確認済み。タップして画面共有を許可"
+            else -> "受信機を検索中。必要ならWindowsのIPを手入力"
+        }
+        notifyState(current)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -138,7 +161,20 @@ class ScreenStreamService : Service() {
             }
             ACTION_STOP_STREAM -> {
                 StreamHub.stopStreaming()
-                notifyState("送信停止中。アプリで再開できます")
+                refreshNotification()
+            }
+            ACTION_RESUME_STREAM -> {
+                StreamHub.enable()
+                Thread({ lastReceiverCount = StreamHub.scanAndConnect(); refreshNotification() },
+                    "ManualResumeDiscovery").start()
+                refreshNotification()
+            }
+            ACTION_SOURCE_CHANGED -> {
+                // USB open/close changes notification actions and video source.
+                refreshNotification()
+            }
+            ACTION_STOP_SCREEN_RECORD -> {
+                if (recorder != null) stopScreenRecord()
             }
             ACTION_EXIT -> { stopSelf(); return START_NOT_STICKY }
             else -> Unit
@@ -183,7 +219,7 @@ class ScreenStreamService : Service() {
             height = size.second
             reader = createReader(width, height)
             val density = resources.displayMetrics.densityDpi
-            display = captured.createVirtualDisplay("MyMonitor014", width, height, density,
+            display = captured.createVirtualDisplay("MyMonitor016", width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, frameHandler)
             projectionActive = true
             StreamHub.projectionReady = true
@@ -222,7 +258,9 @@ class ScreenStreamService : Service() {
     private fun processImage(source: ImageReader) {
         val image = try { source.acquireLatestImage() } catch (_: Exception) { null } ?: return
         try {
-            if (!StreamHub.enabled || StreamHub.uvcReady ||
+            // Recording must continue after "送信停止" or when no Windows PC
+            // is present. The network queue is optional; the MP4 is independent.
+            if (StreamHub.uvcReady ||
                 (!StreamHub.sender.isRunning() && recorder?.isRecording() != true)) return
             val plane = image.planes[0]
             val rowStride = plane.rowStride
@@ -245,7 +283,7 @@ class ScreenStreamService : Service() {
                 Bitmap.createBitmap(padded, 0, 0, image.width, image.height).also { padded.recycle() }
             }
             if (recorder?.isRecording() == true) recorder?.offerFrame(bitmap)
-            if (StreamHub.sender.isRunning()) {
+            if (StreamHub.enabled && StreamHub.sender.isRunning()) {
                 val output = ByteArrayOutputStream(320_000)
                 if (bitmap.compress(Bitmap.CompressFormat.JPEG, 78, output))
                     StreamHub.offerScreen(output.toByteArray())
@@ -312,17 +350,21 @@ class ScreenStreamService : Service() {
         }
         if (rec.start(width, height)) {
             recorder = rec
-            notifyState("● Android画面を録画中")
+            screenRecording = true
+            notifyState("● Android画面を録画中", true)
         }
     }
 
+    private fun stopScreenRecord() {
+        recorder?.stop()
+        recorder = null
+        screenRecording = false
+        notifyState("録画停止。ファイルを保存中", true)
+    }
+
     private fun toggleScreenRecord() {
-        val active = recorder
-        if (active?.isRecording() == true) {
-            active.stop()
-            recorder = null
-            notifyState("録画停止。ファイル確定中")
-        } else beginScreenRecord()
+        if (recorder?.isRecording() == true) stopScreenRecord()
+        else beginScreenRecord()
     }
 
     private fun closeProjection() {
@@ -332,8 +374,8 @@ class ScreenStreamService : Service() {
         try { audioRecord?.stop() } catch (_: Exception) { }
         try { audioRecord?.release() } catch (_: Exception) { }
         audioRecord = null
-        recorder?.stop()
-        recorder = null
+        if (recorder != null) stopScreenRecord()
+        screenRecording = false
         reader?.setOnImageAvailableListener(null, null)
         reader?.close()
         reader = null
@@ -345,7 +387,7 @@ class ScreenStreamService : Service() {
         frameThread?.quitSafely()
         frameThread = null
         frameHandler = null
-        notifyState("画面共有を終了。通知をタップすると再許可できます")
+        if (alive.get()) notifyState("画面共有が終了しました。通知から再許可してください", true)
     }
 
     override fun onDestroy() {
