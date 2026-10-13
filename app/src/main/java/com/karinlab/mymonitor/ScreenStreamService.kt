@@ -54,6 +54,39 @@ class ScreenStreamService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var lastNotification = ""
     private var lastReceiverCount = 0
+    private var screenWakeLock: PowerManager.WakeLock? = null
+    private val uptime = android.os.SystemClock.elapsedRealtime()
+    private val powerHandler = Handler(Looper.getMainLooper())
+    private val powerPoll = object : Runnable {
+        override fun run() {
+            if (!alive.get()) return
+            refreshPowerLock()
+            powerHandler.postDelayed(this, 10000)
+        }
+    }
+
+    /** Hold CPU awake only during an active capture/stream or recording.
+     * This does not override Android foreground-service limits or force-stop. */
+    private fun refreshPowerLock() {
+        val active = projectionActive || StreamHub.uvcReady || screenRecording || StreamHub.uvcRecording
+        if (active) {
+            try {
+                val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+                val lock = screenWakeLock ?: power.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK, "MyMonitor017:ActiveCapture").apply {
+                    setReferenceCounted(false)
+                    screenWakeLock = this
+                }
+                // Refresh the timeout every ten seconds; never leave a five
+                // second CPU-sleep gap while a cast is actively running.
+                lock.acquire(20000)
+            } catch (e: Exception) {
+                android.util.Log.w("MyMonitorPower", "WakeLock acquire failed", e)
+            }
+        } else if (!active && screenWakeLock?.isHeld == true) {
+            try { screenWakeLock?.release() } catch (_: Exception) { }
+        }
+    }
 
     override fun onBind(intent: Intent?) = null
 
@@ -62,7 +95,11 @@ class ScreenStreamService : Service() {
         StreamHub.init(applicationContext)
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "MyMonitor キャスト", NotificationManager.IMPORTANCE_LOW))
-        startForegroundWithType(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        // connectedDevice is the appropriate ongoing LAN/USB receiver interaction.
+        // dataSync is not a perpetual live-stream foreground-service category.
+        startForegroundWithType(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        powerHandler.post(powerPoll)
+        android.util.Log.i("MyMonitorPower", "FGS started (elapsed uptime=$uptime)")
         Thread({
             while (alive.get()) {
                 try {
@@ -100,7 +137,7 @@ class ScreenStreamService : Service() {
         } else serviceAction(ACTION_RECORD, 21)
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_monitor)
-            .setContentTitle("MyMonitor 016")
+            .setContentTitle("MyMonitor 017")
             .setContentText(text)
             .setContentIntent(intentForActivity())
             .setOngoing(true)
@@ -116,8 +153,15 @@ class ScreenStreamService : Service() {
     private fun startForegroundWithType(type: Int) {
         val message = "受信機を検索中。画面共有には許可が必要"
         lastNotification = message
-        if (Build.VERSION.SDK_INT >= 29) startForeground(notificationId, notification(message), type)
-        else startForeground(notificationId, notification(message))
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(notificationId, notification(message), type)
+        } else if (Build.VERSION.SDK_INT >= 29 &&
+            type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION != 0) {
+            startForeground(notificationId, notification(message),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(notificationId, notification(message))
+        }
     }
 
     private fun notifyState(message: String, force: Boolean = false) {
@@ -172,6 +216,8 @@ class ScreenStreamService : Service() {
             }
             ACTION_SOURCE_CHANGED -> {
                 // USB open/close changes notification actions and video source.
+                refreshPowerLock()
+                refreshPowerLock()
                 refreshNotification()
             }
             ACTION_STOP_SCREEN_RECORD -> {
@@ -209,7 +255,7 @@ class ScreenStreamService : Service() {
         if (projectionActive) return
         try {
             startForegroundWithType(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
             val pm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val captured = pm.getMediaProjection(code, data) ?: error("画面共有許可を取得できません")
             projection = captured
@@ -226,10 +272,11 @@ class ScreenStreamService : Service() {
             height = size.second
             reader = createReader(width, height)
             val density = resources.displayMetrics.densityDpi
-            display = captured.createVirtualDisplay("MyMonitor016", width, height, density,
+            display = captured.createVirtualDisplay("MyMonitor017", width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, frameHandler)
             projectionActive = true
             StreamHub.projectionReady = true
+            refreshPowerLock()
             notifyState("画面共有を開始。Windows受信機へ自動接続")
             startAudio(captured)
         } catch (e: Exception) {
@@ -377,6 +424,7 @@ class ScreenStreamService : Service() {
     private fun closeProjection() {
         projectionActive = false
         StreamHub.projectionReady = false
+        refreshPowerLock()
         captureAudio = false
         try { audioRecord?.stop() } catch (_: Exception) { }
         try { audioRecord?.release() } catch (_: Exception) { }
@@ -397,8 +445,25 @@ class ScreenStreamService : Service() {
         if (alive.get()) notifyState("画面共有が終了しました。通知から再許可してください", true)
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Removing an Activity task must not intentionally shut down a
+        // user-started ongoing cast. Android still controls process lifecycle.
+        android.util.Log.i("MyMonitorPower", "Task removed, foreground service remains active")
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        android.util.Log.w("MyMonitorPower", "Memory pressure=$level uptime=" +
+            (android.os.SystemClock.elapsedRealtime() - uptime) + "ms")
+    }
+
     override fun onDestroy() {
+        android.util.Log.w("MyMonitorPower", "Service stopped uptime=" +
+            (android.os.SystemClock.elapsedRealtime() - uptime) + "ms")
         alive.set(false)
+        powerHandler.removeCallbacks(powerPoll)
+        try { if (screenWakeLock?.isHeld == true) screenWakeLock?.release() } catch (_: Exception) { }
         closeProjection()
         StreamHub.shutdown()
         super.onDestroy()

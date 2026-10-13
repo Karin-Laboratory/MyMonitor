@@ -13,12 +13,12 @@ u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctyp
 u.SendMessageW.restype = ctypes.c_ssize_t
 u.PostMessageW.argtypes = u.SendMessageW.argtypes
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-process = subprocess.Popen([str(Path('mycastreceiver016.exe').resolve())])
+process = subprocess.Popen([str(Path('mycastreceiver017.exe').resolve())])
 try:
     deadline = time.monotonic() + 15
     hwnd = None
     while time.monotonic() < deadline:
-        hwnd = u.FindWindowW('MyCastReceiver016', None)
+        hwnd = u.FindWindowW('MyCastReceiver017', None)
         if hwnd: break
         time.sleep(.1)
     assert hwnd, 'Receiver window not created'

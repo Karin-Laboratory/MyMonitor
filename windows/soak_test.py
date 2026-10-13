@@ -20,7 +20,7 @@ u.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
 u.FindWindowW.restype = ctypes.c_void_p
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
 u.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
-process = subprocess.Popen([str(Path("mycastreceiver016.exe").resolve())])
+process = subprocess.Popen([str(Path("mycastreceiver017.exe").resolve())])
 s = None
 hwnd = None
 
@@ -33,7 +33,7 @@ def connect():
 try:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        hwnd = u.FindWindowW("MyCastReceiver016", None)
+        hwnd = u.FindWindowW("MyCastReceiver017", None)
         if hwnd:
             break
         time.sleep(.1)

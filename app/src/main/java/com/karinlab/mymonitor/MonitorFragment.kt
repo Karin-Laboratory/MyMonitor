@@ -45,6 +45,9 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private var recording = false
     private var stopping = false
     private var viewReady = false
+    private var inputWidth = 1920
+    private var inputHeight = 1080
+    private var lastFit = PreviewGeometry.Size(0, 0)
     private lateinit var preview: AspectRatioTextureView
     private lateinit var placeholder: TextView
 
@@ -67,7 +70,14 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         }
         root.addView(placeholder, FrameLayout.LayoutParams(-1, -1))
         preview = AspectRatioTextureView(requireContext())
+        // The upstream TextureView recalculates its own aspect ratio, but its
+        // MATCH_PARENT parent never re-centers it reliably after rotation.
+        // Give it an explicit fit-center rectangle using REAL root bounds.
+        preview.setAspectRatio(inputWidth, inputHeight)
         root.addView(preview, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        root.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+            adjustPreviewViewport(right - left, bottom - top)
+        }
         preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
                 viewReady = true
@@ -75,7 +85,9 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 refreshUsb()
             }
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
-                camera?.setRenderSize(width, height)
+                // Render to exactly the measured preview Surface, not the
+                // previous orientation's full-screen window dimensions.
+                if (width > 0 && height > 0) camera?.setRenderSize(width, height)
             }
             override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
                 viewReady = false
@@ -89,6 +101,11 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     override fun onStart() {
         super.onStart()
+        if (usbMonitor != null) {
+            // Keep the same listener through a background/foreground round trip.
+            refreshUsb()
+            return
+        }
         try {
             usbMonitor = USBMonitor.getInstance(requireContext()).also { monitor ->
                 monitor.setOnDeviceConnectListener(object : USBMonitor.OnDeviceConnectListener {
@@ -131,9 +148,35 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         } catch (e: Exception) { status("USB初期化失敗: ${e.message}") }
     }
 
+    /**
+     * Re-fit the native 16:9 HDMI/UVC frame after BOTH rotation and control-bar
+     * visibility changes. HDMI pixels are never rotated or stretched.
+     */
+    private fun adjustPreviewViewport(w: Int, h: Int) {
+        if (w <= 0 || h <= 0 || !::preview.isInitialized) return
+        val fitted = PreviewGeometry.fit(inputWidth, inputHeight, w, h)
+        if (fitted == lastFit) return
+        lastFit = fitted
+        val existing = preview.layoutParams as FrameLayout.LayoutParams
+        if (existing.width != fitted.width || existing.height != fitted.height ||
+            existing.gravity != Gravity.CENTER) {
+            preview.layoutParams = FrameLayout.LayoutParams(
+                fitted.width, fitted.height, Gravity.CENTER)
+        }
+        preview.setAspectRatio(inputWidth, inputHeight)
+        // TextureView surface resize callback updates the renderer as needed.
+        if (viewReady && ready && preview.width == fitted.width &&
+            preview.height == fitted.height) camera?.setRenderSize(fitted.width, fitted.height)
+    }
+
     fun updateSurfaceSize() {
-        if (viewReady && ::preview.isInitialized && ready)
-            camera?.setRenderSize(preview.width, preview.height)
+        if (!isAdded || !::preview.isInitialized) return
+        val root = preview.parent as? FrameLayout ?: return
+        // During configuration updates the layout may not yet be measured.
+        // A post-layout pass reads the NEW orientation bounds.
+        root.post {
+            if (isAdded) adjustPreviewViewport(root.width, root.height)
+        }
     }
 
     fun refreshUsb() {
@@ -209,6 +252,12 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     val request = self.getCameraRequest()
                     val width = request?.previewWidth ?: 0
                     val height = request?.previewHeight ?: 0
+                    if (width > 0 && height > 0) {
+                        inputWidth = width
+                        inputHeight = height
+                        lastFit = PreviewGeometry.Size(0, 0)
+                        updateSurfaceSize()
+                    }
                     status("UVC映像 ${width}×${height}" + if (width == 1920 && height == 1080) " / Full HD" else " / 機器が選択した解像度")
                 }
                 ICameraStateCallBack.State.CLOSED -> { ready = false; StreamHub.setUvcReady(false); status("UVCクローズ") }
@@ -257,12 +306,21 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     }
 
     override fun onStop() {
+        // A foreground-service session may outlive the Activity's visibility.
+        // Do NOT forcibly close a working UVC stream merely because the user
+        // opened another app. The TextureView destruction, USB detach or
+        // explicit exit remains responsible for releasing the camera.
+        super.onStop()
+    }
+
+    override fun onDestroyView() {
+        // Real view destruction is different from transient Activity onStop.
         closeCamera()
         waitingForPermission = false
         usbMonitor?.unregister()
         usbMonitor?.destroy()
         usbMonitor = null
-        super.onStop()
+        super.onDestroyView()
     }
 
     private fun destination(ext: String): File {

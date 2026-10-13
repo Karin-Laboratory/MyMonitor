@@ -8,6 +8,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+import android.util.Log
 import android.app.Activity
 import android.media.projection.MediaProjectionManager
 import android.media.projection.MediaProjectionConfig
@@ -126,6 +129,10 @@ class MainActivity : AppCompatActivity() {
         controls.addView(scan)
         controls.addView(button("Windowsへ転送") { discoverWindows() })
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        // Reserve real room for the bottom toolbar rather than letting its
+        // rotated/higher landscape layout cover the HDMI video viewport.
+        controls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateVideoViewport() }
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateVideoViewport() }
         monitor = (supportFragmentManager.findFragmentByTag("monitor") as? MonitorFragment) ?: MonitorFragment()
         val filter = IntentFilter().apply { addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED); addAction(UsbManager.ACTION_USB_DEVICE_DETACHED) }
         ContextCompat.registerReceiver(this, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -159,9 +166,61 @@ class MainActivity : AppCompatActivity() {
             messageHandler.postDelayed({ onUvcReady() }, 1000)
         }
         messageHandler.postDelayed({ askNotificationPermissionIfNeeded() }, 900)
+        // Android installs cannot silently grant power-exemption permissions.
+        // Explain the choice once, then open the explicit Android system dialog.
+        messageHandler.postDelayed({ promptBatteryOptimizationOnce() }, 3200)
         root.setOnClickListener {
             controlsVisible = !controlsVisible
             controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
+            updateVideoViewport()
+        }
+    }
+
+    private fun updateVideoViewport() {
+        if (!::video.isInitialized || !::controls.isInitialized) return
+        val params = video.layoutParams as? FrameLayout.LayoutParams ?: return
+        val reserved = if (controls.visibility == View.VISIBLE) controls.height else 0
+        if (params.bottomMargin == reserved) return
+        params.bottomMargin = reserved
+        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        video.layoutParams = params
+        if (::monitor.isInitialized) monitor.updateSurfaceSize()
+    }
+
+    private fun promptBatteryOptimizationOnce() {
+        if (isFinishing || isDestroyed || Build.VERSION.SDK_INT < 23) return
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (power.isIgnoringBatteryOptimizations(packageName)) return
+        if (prefs.getBoolean("batteryPromptShown017", false)) return
+        // Avoid obscuring an active Android screen-capture consent sheet.
+        if (requestingProjection || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            // Try again on a user-visible onResume, not forever in background.
+            return
+        }
+        prefs.edit().putBoolean("batteryPromptShown017", true).apply()
+        AlertDialog.Builder(this)
+            .setTitle("バックグラウンド転送の省電力設定")
+            .setMessage("画面転送中にAndroidがアプリを停止しにくくするため、MyMonitorの電池最適化を解除できます。消費電力は増えます。許可は端末の設定画面でユーザーが選びます。")
+            .setPositiveButton("設定を開く") { _, _ -> openBatteryExemptionRequest() }
+            .setNegativeButton("あとで", null)
+            .show()
+    }
+
+    private fun openBatteryExemptionRequest() {
+        if (Build.VERSION.SDK_INT < 23) return
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            })
+        } catch (e: Exception) {
+            Log.w("MyMonitorPower", "Direct battery exemption unavailable", e)
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                })
+            }
         }
     }
 
@@ -305,11 +364,14 @@ class MainActivity : AppCompatActivity() {
         // Avoid destroying and re-opening the USB preview on portrait/landscape.
         // Existing UVC TextureView receives a size change, projection VirtualDisplay
         // receives onCapturedContentResize, and the TCP source stays selected.
+        updateVideoViewport()
         if (cameraMounted && hasUvcDevice()) monitor.updateSurfaceSize()
     }
 
     override fun onResume() {
         super.onResume()
+        if (::state.isInitialized)
+            messageHandler.postDelayed({ promptBatteryOptimizationOnce() }, 1200)
         if (::monitor.isInitialized && ::video.isInitialized && !hasUvcDevice())
             onUvcGone()
         else if (::monitor.isInitialized && hasUvcDevice()) {

@@ -50,3 +50,29 @@ expected={
 for name, (content, needle) in expected.items():
     assert needle in content, f"Missing v016 contract: {name} / {needle}"
 print(f"SPEC CONTRACT PASS: {len(expected)} source/lifecycle/recording/latency anchors")
+
+# v017: preventing a foreground Activity STOP from shutting down the capture
+# is not the same as a guaranteed background camera service (surface can die).
+manifest=file("app/src/main/AndroidManifest.xml")
+preview=file("app/src/main/java/com/karinlab/mymonitor/PreviewGeometry.kt")
+assert "FOREGROUND_SERVICE_CONNECTED_DEVICE" in manifest
+assert "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" in manifest
+assert "WAKE_LOCK" in manifest
+assert 'foregroundServiceType="connectedDevice|mediaProjection"' in manifest
+assert "promptBatteryOptimizationOnce()" in activity
+assert "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" in activity
+assert "updateVideoViewport()" in activity
+assert "override fun onConfigurationChanged(" in activity
+assert "PreviewGeometry.fit(" in fragment
+assert "preview.setAspectRatio(" in fragment
+assert "fun adjustPreviewViewport(" in fragment
+assert "onDestroyView()" in fragment
+activityStop=fragment.split("override fun onStop()",1)[1].split("override fun onDestroyView()",1)[0]
+assert "closeCamera()" not in activityStop, "UVC must not be forcibly closed on ordinary backgrounding"
+assert "FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE" in service
+assert "PowerManager.PARTIAL_WAKE_LOCK" in service
+assert "refreshPowerLock()" in service
+assert "onTaskRemoved(" in service
+assert "onTrimMemory(" in service
+assert 'versionCode 17' in file("app/build.gradle")
+print("V017 POWER + ORIENTATION CONTRACT PASS: permission, service, lifecycle, geometry, version")
