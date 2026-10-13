@@ -180,6 +180,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 ICameraStateCallBack.State.OPENED -> {
                     ready = true
                     StreamHub.setUvcReady(true)
+                    host()?.onUvcReady()
                     // Native MJPEG callback is independent of NV21 used for photo/recording.
                     (self as? CameraUVC)?.setMjpegDataCallback(IFrameCallback { buffer ->
                         if (buffer != null) StreamHub.offerUvc(buffer)

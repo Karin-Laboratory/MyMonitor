@@ -48,6 +48,10 @@ object StreamHub {
     fun stopStreaming() {
         enabled = false
         app.getSharedPreferences("monitor", Context.MODE_PRIVATE).edit().putBoolean("autoStream", false).apply()
+        shutdown()
+    }
+    /** Lifecycle cleanup must not silently disable auto-connect on next launch. */
+    fun shutdown() {
         sender.stop()
         audio.stop()
         selectedHost = null

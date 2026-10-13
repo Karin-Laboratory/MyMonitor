@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     private var receiverRegistered = false
     private var requestingProjection = false
     private var audioPermissionAsked = false
+    private var pendingUvcRecord = false
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED || intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
@@ -110,14 +111,18 @@ class MainActivity : AppCompatActivity() {
             Thread.sleep(1800)
             val count = StreamHub.scanAndConnect()
             if (count > 0) runOnUiThread {
-                if (!hasUvcDevice() && !ScreenStreamService.projectionActive) beginScreenConsent()
+                if (!hasUvcDevice() && !ScreenStreamService.projectionActive) {
+                    if (StreamHub.selectedHost != null) beginScreenConsent()
+                    else if (count > 1) discoverWindows()
+                }
             }
         }, "InitialReceiverSearch").start()
         if (intent?.action == "com.karinlab.mymonitor.GRANT_SCREEN") {
             messageHandler.postDelayed({ beginScreenConsent() }, 500)
         }
         if (intent?.action == "com.karinlab.mymonitor.UVC_RECORD") {
-            messageHandler.postDelayed({ if (StreamHub.uvcReady) monitor.toggleRecording() }, 500)
+            pendingUvcRecord = true
+            messageHandler.postDelayed({ onUvcReady() }, 1000)
         }
         root.setOnClickListener {
             controlsVisible = !controlsVisible
@@ -169,11 +174,19 @@ class MainActivity : AppCompatActivity() {
         when (next.action) {
             "com.karinlab.mymonitor.GRANT_SCREEN" -> beginScreenConsent()
             "com.karinlab.mymonitor.UVC_RECORD" -> {
-                if (StreamHub.uvcReady) monitor.toggleRecording()
+                pendingUvcRecord = true
+                onUvcReady()
             }
             UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                 messageHandler.postDelayed({ requestCameraForUvc(); if (cameraMounted) monitor.refreshUsb() }, 500)
             }
+        }
+    }
+
+    fun onUvcReady() {
+        if (pendingUvcRecord && StreamHub.uvcReady) {
+            pendingUvcRecord = false
+            monitor.toggleRecording()
         }
     }
 

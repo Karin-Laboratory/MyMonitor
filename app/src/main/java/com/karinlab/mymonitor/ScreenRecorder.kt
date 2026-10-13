@@ -15,7 +15,7 @@ import kotlin.math.min
 
 /** Asynchronous MP4 recorder (H.264/AAC) driven by the screen ImageReader and AudioRecord.
  * CPU conversion is isolated from the low-latency network producer. */
-class ScreenRecorder(private val context: Context, private val finished: (File?, String?) -> Unit) {
+class ScreenRecorder(private val context: Context, private val withAudio: Boolean, private val finished: (File?, String?) -> Unit) {
     private data class Frame(val bitmap: Bitmap, val pts: Long)
     private data class Audio(val data: ByteArray, val pts: Long)
     private val frames = ArrayBlockingQueue<Frame>(2)
@@ -70,13 +70,16 @@ class ScreenRecorder(private val context: Context, private val finished: (File?,
             v = vc
             vc.configure(vFmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             vc.start()
-            val aFmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 48000, 2)
-            aFmt.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-            aFmt.setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
-            val ac = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-            a = ac
-            ac.configure(aFmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            ac.start()
+            val ac = if (withAudio) {
+                val aFmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 48000, 2)
+                aFmt.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                aFmt.setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
+                MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC).also {
+                    a = it
+                    it.configure(aFmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    it.start()
+                }
+            } else null
             val mm = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             mux = mm
             val info = MediaCodec.BufferInfo()
@@ -87,7 +90,7 @@ class ScreenRecorder(private val context: Context, private val finished: (File?,
                     if (idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                         if (video) vTrack = mm.addTrack(codec.outputFormat)
                         else aTrack = mm.addTrack(codec.outputFormat)
-                        if (!started && vTrack >= 0 && aTrack >= 0) {
+                        if (!started && vTrack >= 0 && (!withAudio || aTrack >= 0)) {
                             mm.start(); started = true
                         }
                         continue
@@ -122,21 +125,21 @@ class ScreenRecorder(private val context: Context, private val finished: (File?,
                 }
                 repeat(5) {
                     val sound = sounds.poll() ?: return@repeat
-                    val idx = ac.dequeueInputBuffer(0)
+                    val idx = ac?.dequeueInputBuffer(0) ?: -1
                     if (idx >= 0) {
-                        val buffer = ac.getInputBuffer(idx)!!
+                        val buffer = ac!!.getInputBuffer(idx)!!
                         buffer.clear()
                         val count = min(sound.data.size, buffer.remaining())
                         buffer.put(sound.data, 0, count)
                         ac.queueInputBuffer(idx, 0, count, sound.pts, 0)
                     }
                 }
-                drain(vc, true); drain(ac, false)
+                drain(vc, true); if (ac != null) drain(ac, false)
                 if (frame == null && sounds.isEmpty())
                     try { Thread.sleep(8) } catch (_: InterruptedException) { }
             }
-            repeat(12) { drain(vc, true); drain(ac, false); Thread.sleep(8) }
-            if (!started) error = "MP4作成に必要な映像・音声トラックがありません"
+            repeat(12) { drain(vc, true); if (ac != null) drain(ac, false); try { Thread.sleep(8) } catch (_: InterruptedException) { } }
+            if (!started) error = "MP4作成に必要なエンコーダ出力がありません"
         } catch (e: Exception) {
             error = "録画失敗: " + e.message
         } finally {

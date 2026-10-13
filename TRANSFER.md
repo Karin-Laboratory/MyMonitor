@@ -4,7 +4,7 @@
 
 - **mymonitor013.apk**: one Android application for USB HDMI/UVC preview, automatic Windows casting, MediaProjection screen capture, internal playback audio, recordings and SMB/local exports. This replaces the planned separate MyCast sender APK.
 - **mycastreceiver013.exe**: one Windows x64 EXE compatible with v012's MMC9 MJPEG sender. Receives smartphone screen JPEG and UVC's passthrough MJPEG on TCP 57007, plus internal audio PCM16/48kHz stereo on TCP 57009. Receiver discovery UDP 57008.
-- **Recording:** UVC video capture retains existing video-only MP4, photos and SMB export; screen recording uses MediaCodec H.264 video plus AAC internal audio saved to MP4 locally, then exported asynchronously to local SAF folder and/or SMB.
+- **Recording:** UVC video capture retains existing video-only MP4, photos and SMB export; screen recording uses MediaCodec H.264 video and AAC when internal-audio capture is available (otherwise video-only) saved to MP4 locally, then exported asynchronously to local SAF folder and/or SMB.
 
 ## Start and permissions
 
@@ -27,7 +27,7 @@ The v012 "one JPEG in flight + ACK + newest frame" policy, TCP watchdog and auto
 - No userless MediaProjection activation. Each session needs permission; system can terminate it when screen locks, another projection starts or the user presses Stop. Notifications are the recovery path.
 - On some Android releases, automatic foreground launch after USB insertion is restricted. The USB class filter provides OS-assisted opening when possible; otherwise the user must tap the ongoing notification.
 - The foreground service itself is subject to OS background limits, battery saver, and notification permissions. "Permanent" service lifecycle is not guaranteed.
-- The on-device H.264/AAC recording encoder depends on MediaCodec YUV420Flex support and availability of AudioPlaybackCapture. Recording frame conversion costs CPU, so capture/record stress on the user's exact phone remains to be verified.
+- The on-device H.264/AAC recording encoder depends on MediaCodec YUV420Flex support and availability of AudioPlaybackCapture. Screen recording falls back to video-only MP4 when audio permission or capture is unavailable. Recording frame conversion costs CPU, so capture/record stress on the user's exact phone remains to be verified.
 - UVC recording is video only in v013, as in v012. If the USB device itself supplies audio, that is not added here.
 - 013 Windows and Android audio is a separate TCP stream; there is no clock-corrected A/V sync engine. This is deliberately biased toward minimum perceived lag and may produce lip-sync offsets on congested WLAN.
 - CI tests build the APK+EXE, decode synthetic Full HD MJPEG, test reconnection and corrupt frames, perform a 2+ minute video soak, and inject synthetic PCM. It cannot confirm actual on-phone MediaProjection, UVC capture, MediaCodec MP4 or speaker audio without real devices.

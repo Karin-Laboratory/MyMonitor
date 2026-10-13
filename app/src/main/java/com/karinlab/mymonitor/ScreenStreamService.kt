@@ -230,8 +230,17 @@ class ScreenStreamService : Service() {
             if (pixelStride != 4) return
             val paddedW = rowStride / pixelStride
             val padded = Bitmap.createBitmap(paddedW, image.height, Bitmap.Config.ARGB_8888)
-            plane.buffer.rewind()
-            padded.copyPixelsFromBuffer(plane.buffer)
+            val data = plane.buffer.duplicate()
+            data.rewind()
+            try {
+                padded.copyPixelsFromBuffer(data)
+            } catch (_: java.nio.BufferUnderflowException) {
+                // Some GPUs omit unused padding after the final row.
+                val paddedBytes = ByteArray(rowStride * image.height)
+                data.rewind()
+                data.get(paddedBytes, 0, minOf(data.remaining(), paddedBytes.size))
+                padded.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(paddedBytes))
+            }
             val bitmap = if (paddedW == image.width) padded else {
                 Bitmap.createBitmap(padded, 0, 0, image.width, image.height).also { padded.recycle() }
             }
@@ -295,7 +304,7 @@ class ScreenStreamService : Service() {
             notifyState("画面共有許可後に録画できます")
             return
         }
-        val rec = ScreenRecorder(this) { file, error ->
+        val rec = ScreenRecorder(this, audioRecord != null) { file, error ->
             if (file != null) {
                 Storage.save(applicationContext, file, "video/mp4",
                     getSharedPreferences("monitor", MODE_PRIVATE)) { msg -> notifyState(msg) }
@@ -342,7 +351,7 @@ class ScreenStreamService : Service() {
     override fun onDestroy() {
         alive.set(false)
         closeProjection()
-        StreamHub.stopStreaming()
+        StreamHub.shutdown()
         super.onDestroy()
     }
 }
