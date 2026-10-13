@@ -16,7 +16,7 @@ class PreviewGeometryTest {
         assertEquals(PreviewGeometry.Size(1422, 800),
             PreviewGeometry.fit(1920, 1080, 1600, 800))
     }
-    @Test fun 4by3UvcMaintainsAspectRatio() {
+    @Test fun fourByThreeUvcMaintainsAspectRatio() {
         assertEquals(PreviewGeometry.Size(1333, 1000),
             PreviewGeometry.fit(640, 480, 2400, 1000))
     }
