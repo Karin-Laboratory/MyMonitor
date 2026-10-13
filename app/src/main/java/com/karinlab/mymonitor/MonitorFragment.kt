@@ -36,7 +36,7 @@ import java.util.Locale
  * a UVC video interface (common for inexpensive HDMI grabbers).
  */
 class MonitorFragment : Fragment(), ICameraStateCallBack {
-    private val windowsSender = WindowsSender { status(it) }
+    private val windowsSender get() = StreamHub.sender
     private var usbMonitor: USBMonitor? = null
     private var camera: CameraUVC? = null
     private var currentDeviceId: Int? = null
@@ -154,7 +154,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             newCamera.addPreviewDataCallBack(object : IPreviewDataCallBack {
                 override fun onPreviewData(data: ByteArray?, width: Int, height: Int, format: IPreviewDataCallBack.DataFormat) {
                     if (data != null && format == IPreviewDataCallBack.DataFormat.NV21) {
-                        windowsSender.offer(data, width, height)
+                        StreamHub.offerUvcNv21(data, width, height)
                     }
                 }
             })
@@ -179,9 +179,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             when (code) {
                 ICameraStateCallBack.State.OPENED -> {
                     ready = true
+                    StreamHub.setUvcReady(true)
                     // Native MJPEG callback is independent of NV21 used for photo/recording.
                     (self as? CameraUVC)?.setMjpegDataCallback(IFrameCallback { buffer ->
-                        if (buffer != null) windowsSender.offerJpeg(buffer)
+                        if (buffer != null) StreamHub.offerUvc(buffer)
                     })
                     placeholder.visibility = View.GONE
                     val request = self.getCameraRequest()
@@ -189,20 +190,20 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     val height = request?.previewHeight ?: 0
                     status("UVC映像 ${width}×${height}" + if (width == 1920 && height == 1080) " / Full HD" else " / 機器が選択した解像度")
                 }
-                ICameraStateCallBack.State.CLOSED -> { ready = false; status("UVCクローズ") }
-                ICameraStateCallBack.State.ERROR -> { ready = false; status("UVCエラー: ${msg ?: "unknown"}") }
+                ICameraStateCallBack.State.CLOSED -> { ready = false; StreamHub.setUvcReady(false); status("UVCクローズ") }
+                ICameraStateCallBack.State.ERROR -> { ready = false; StreamHub.setUvcReady(false); status("UVCエラー: ${msg ?: "unknown"}") }
             }
         }
     }
 
     fun startWindows(host: String, port: Int) {
-        if (!ready) { status("UVC映像を接続してから転送してください"); return }
-        windowsSender.start(host, port)
+        StreamHub.enable()
+        StreamHub.connect(host, port)
     }
-    fun stopWindows() { windowsSender.stop(); status("Windows転送停止") }
+    fun stopWindows() { StreamHub.stopStreaming(); status("Windows転送停止") }
 
     private fun closeCamera() {
-        windowsSender.stop()
+        StreamHub.setUvcReady(false)
         ready = false
         recording = false
         stopping = false

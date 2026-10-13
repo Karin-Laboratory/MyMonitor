@@ -1,37 +1,42 @@
-# My Monitor 012 / My Cast Receiver
+# MyMonitor v0.13: Android screen + UVC in one app
 
-## 012: Fix video disappearing after several minutes
+## Deliverables
 
-- **Android automatically reconnects** to the selected Windows receiver after a broken TCP connection, ACK timeout or receiver restart. No manual reconnect after a transient failure. Retry delay grows from 250ms to 2s.
-- **8-second write/ACK watchdog** on the Android side closes a stalled socket to ensure the retry loop can recover even if a network write becomes blocked.
-- **Windows no longer disconnects on one malformed MJPEG JPEG.** It discards only that frame, sends ACK and continues with the next latest frame. The window title shows cumulative skipped frames for diagnostics.
-- **Windows retains the last valid video frame** when a sender disconnects instead of showing a blank window. A visible "Connection lost - waiting for automatic reconnect" warning prevents mistaking the still image for live video. The warning disappears on the next valid decoded frame.
-- Windows CI tests include bad frames, immediate reconnect, and a 650-frame, 2+ minute stream with multiple disconnect/reconnect cycles. Actual Pixel / Wi-Fi / HDMI grabber runtime still requires testing.
-- No codec downgrade: true USB MJPEG passthrough and NV21/JPEG fallback from 011 remain.
-- Same Android/Windows monitor icons. Same Full HD client (1920x1080), TCP 57007, UDP discovery 57008. Video only.
+- **mymonitor013.apk**: one Android application for USB HDMI/UVC preview, automatic Windows casting, MediaProjection screen capture, internal playback audio, recordings and SMB/local exports. This replaces the planned separate MyCast sender APK.
+- **mycastreceiver013.exe**: one Windows x64 EXE compatible with v012's MMC9 MJPEG sender. Receives smartphone screen JPEG and UVC's passthrough MJPEG on TCP 57007, plus internal audio PCM16/48kHz stereo on TCP 57009. Receiver discovery UDP 57008.
+- **Recording:** UVC video capture retains existing video-only MP4, photos and SMB export; screen recording uses MediaCodec H.264 video plus AAC internal audio saved to MP4 locally, then exported asynchronously to local SAF folder and/or SMB.
 
-## Install and use
+## Start and permissions
 
-1. Download both files from the v0.12 GitHub Release: mymonitor012.apk and mycastreceiver012.exe.
-2. Stop/close all older receiver EXEs before starting 012 (TCP 57007 can be bound by only one process).
-3. Windows Firewall: permit TCP 57007 and UDP 57008 on the **Private** network only.
-4. Start 012 receiver, open 012 Android APK with UVC/HDMI capture connected.
-5. Tap "Windowsへ転送": auto-search and connect if one receiver responds. If discovery fails, use manual IPv4/port.
-6. OBS -> Window Capture -> My Cast Receiver; use a 1920x1080 canvas/output for Full HD.
-7. If Wi-Fi goes away, a labeled last image remains on Windows; on restoration the Pixel should retry and the live image should resume without tapping connect again.
+1. Start mycastreceiver013.exe. Close previous receiver versions first. Allow TCP **57007**, **57009** and UDP **57008** on trusted Private LAN/Wi-Fi only.
+2. Open MyMonitor013 on the phone. It starts an ongoing foreground notification and discovers LAN receivers. Exactly one receiver connects automatically; when several receivers appear, the last selected/remembered receiver wins, otherwise the user chooses from the existing receiver picker.
+3. **User consent is mandatory for every Android screen-sharing session.** If the receiver is found while the app is open, Android asks for MediaProjection permission. Grant it; MyMonitor returns to the home screen and streams the screen. If the receiver appeared later while the app was backgrounded, tap the foreground notification to grant screen capture. The app cannot silently bypass Android's consent dialog.
+4. Grant the RECORD_AUDIO permission for internal playback sound. Only other apps' capturable playback (media/game/unknown usage and allowed capture policy) can be sent; DRM-protected material and some apps do not permit capture.
+5. Plug in a UVC capture adapter and grant USB/camera access. When the Android system delivers the USB attach intent and launches MyMonitor, the UVC preview takes priority; the receiver switches to UVC MJPEG automatically. On unplug it returns to the still-running screen projection, if valid. Android restrictions may require tapping the UVC/notification to bring the app forward.
+6. Notification: recording start/stop, streaming stop and exit. A deliberate streaming stop persists until the user explicitly starts streaming again in-app. The projection may require fresh consent if it was stopped by Android.
+7. Screen changes between portrait/landscape: MediaProjection's display is resized, retaining aspect ratio with a **1920x1080 landscape / 1080x1920 portrait maximum**. Receiver uses fixed initial 1920x1080 video area, preserves aspect ratio, and allows manual resizing.
 
-## Known constraints
+## Live codec decision
 
-- Real hardware tests are still necessary: automated CI tests simulate JPEG frame sends to the actual Windows EXE, not USB capture and radio interference.
-- If the HDMI source stops producing frames while TCP stays open, there is no video to transmit; the receiver disconnects after its existing 5-second idle receive timeout and displays a warning. Automatic sender retry is activated when a subsequent frame attempts to use that stale connection.
-- We deliberately keep the latest one-frame ACK protocol (MMC9), no growing latency queue.
-- TCP video and UDP discovery have **no encryption or authentication**. Trusted home Wi-Fi/LAN only. Never forward these ports to the internet.
-- The UVC 3.6.0 source patch is pinned to commit 09df386a46e6aef22e4a020105246b2c9805ed05.
-- CI uses cached development signing. If the Android APK signature unexpectedly changes, an uninstall/reinstall can be necessary; back up your app settings first.
+**Live screen video deliberately uses JPEG rather than H.264, and internal audio uses PCM16 rather than AAC.** On trusted high-bandwidth home LAN, this keeps the already-proven low-queue MMC9 transport and avoids H.264 buffering, new Media Foundation decoder requirements and A/V jitter buffers. Sound is received using built-in Windows winmm waveOut; OBS may capture it via desktop audio. **MP4 files** are encoded H.264/AAC, not JPEG/PCM.
 
-## Verification scope
+The v012 "one JPEG in flight + ACK + newest frame" policy, TCP watchdog and automatic reconnect remain. Stream and recording use separate queues: slow SMB uploads or MP4 encoding do not directly add frames to the network send queue.
 
-- APK builds with patched native MJPEG data tap and keeps local photo/MP4/SMB.
-- Windows executable remains a single statically linked x64 EXE.
-- Smoke test checks Full HD ACK, LAN discovery, simulated corrupt MJPEG drop, last-frame preservation and reconnect.
-- Soak test keeps a receiver active for >120 seconds with 650 frames, 13 invalid frames and five deliberate transport reconnects.
+## Limitations to confirm on real devices
+
+- No userless MediaProjection activation. Each session needs permission; system can terminate it when screen locks, another projection starts or the user presses Stop. Notifications are the recovery path.
+- On some Android releases, automatic foreground launch after USB insertion is restricted. The USB class filter provides OS-assisted opening when possible; otherwise the user must tap the ongoing notification.
+- The foreground service itself is subject to OS background limits, battery saver, and notification permissions. "Permanent" service lifecycle is not guaranteed.
+- The on-device H.264/AAC recording encoder depends on MediaCodec YUV420Flex support and availability of AudioPlaybackCapture. Recording frame conversion costs CPU, so capture/record stress on the user's exact phone remains to be verified.
+- UVC recording is video only in v013, as in v012. If the USB device itself supplies audio, that is not added here.
+- 013 Windows and Android audio is a separate TCP stream; there is no clock-corrected A/V sync engine. This is deliberately biased toward minimum perceived lag and may produce lip-sync offsets on congested WLAN.
+- CI tests build the APK+EXE, decode synthetic Full HD MJPEG, test reconnection and corrupt frames, perform a 2+ minute video soak, and inject synthetic PCM. It cannot confirm actual on-phone MediaProjection, UVC capture, MediaCodec MP4 or speaker audio without real devices.
+- Windows application runs on a single EXE using GDI+/winmm; no DLL download or additional runtime.
+- Sender TCP/UDP protocols are unauthenticated and unencrypted. **Do not forward TCP 57007/57009 or UDP 57008 outside trusted home LAN.**
+
+## Release / rollback
+
+CI uses the same cached debug signing key as v0.12. v0.12 releases remain available:
+https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.12
+
+Use the matching v0.13 APK+EXE together. Older UVC sender 012 is also compatible with EXE 013 over MMC9. Ensure you have locally backed up recordings and SMB settings before changing debug signing identity or uninstalling.

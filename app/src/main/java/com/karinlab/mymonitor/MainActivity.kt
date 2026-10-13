@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.IntentFilter
 import android.os.Build
 import android.app.Activity
+import android.media.projection.MediaProjectionManager
+import android.media.projection.MediaProjectionConfig
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -36,10 +38,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var video: FrameLayout
     private var cameraMounted = false
     private var receiverRegistered = false
+    private var requestingProjection = false
+    private var audioPermissionAsked = false
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED || intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
-                video.postDelayed({ scanUsbDevices(); monitor.refreshUsb() }, 400)
+                video.postDelayed({ scanUsbDevices(); requestCameraForUvc(); if (cameraMounted) monitor.refreshUsb() }, 400)
             }
         }
     }
@@ -54,6 +58,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        StreamHub.init(applicationContext)
+        StreamHub.statusSink = { showStatus(it) }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
 
@@ -70,8 +76,15 @@ class MainActivity : AppCompatActivity() {
             setPadding(8, 10, 8, 10)
             setBackgroundColor(0x99000000.toInt())
         }
-        val photo = button("📷 撮影") { monitor.takePhoto() }
-        record = button("● 録画") { monitor.toggleRecording() }
+        val photo = button("📷 撮影") {
+            if (StreamHub.uvcReady) monitor.takePhoto() else showStatus("スマホ画面の保存は録画を使用してください")
+        }
+        record = button("● 録画") {
+            if (StreamHub.uvcReady) monitor.toggleRecording()
+            else startService(Intent(this, ScreenStreamService::class.java).apply {
+                action = ScreenStreamService.ACTION_RECORD
+            })
+        }
         setRecording(false)
         val folder = button("📁 保存先") { chooseFolder() }
         val smb = button("NAS / SMB") { smbSettings() }
@@ -87,12 +100,80 @@ class MainActivity : AppCompatActivity() {
         val filter = IntentFilter().apply { addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED); addAction(UsbManager.ACTION_USB_DEVICE_DETACHED) }
         ContextCompat.registerReceiver(this, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         receiverRegistered = true
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) mountCamera()
-        else { showStatus("USB映像の利用にはカメラ権限が必要です"); requestPermissions(arrayOf(Manifest.permission.CAMERA), 101) }
+        requestCameraForUvc()
         scanUsbDevices()
+        ContextCompat.startForegroundService(this,
+            Intent(this, ScreenStreamService::class.java).apply { action = ScreenStreamService.ACTION_START })
+        // On first launch the app is foreground, so Android can show the required
+        // MediaProjection consent dialog when a single receiver is discovered.
+        Thread({
+            Thread.sleep(1800)
+            val count = StreamHub.scanAndConnect()
+            if (count > 0) runOnUiThread {
+                if (!hasUvcDevice() && !ScreenStreamService.projectionActive) beginScreenConsent()
+            }
+        }, "InitialReceiverSearch").start()
+        if (intent?.action == "com.karinlab.mymonitor.GRANT_SCREEN") {
+            messageHandler.postDelayed({ beginScreenConsent() }, 500)
+        }
+        if (intent?.action == "com.karinlab.mymonitor.UVC_RECORD") {
+            messageHandler.postDelayed({ if (StreamHub.uvcReady) monitor.toggleRecording() }, 500)
+        }
         root.setOnClickListener {
             controlsVisible = !controlsVisible
             controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun hasUvcDevice(): Boolean {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        return manager.deviceList.values.any { device ->
+            device.deviceClass == UsbConstants.USB_CLASS_VIDEO ||
+                (0 until device.interfaceCount).any {
+                    device.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_VIDEO
+                }
+        }
+    }
+
+    private fun requestCameraForUvc() {
+        if (!hasUvcDevice()) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+            mountCamera()
+        else requestPermissions(arrayOf(Manifest.permission.CAMERA), 101)
+    }
+
+    private fun beginScreenConsent() {
+        if (requestingProjection || ScreenStreamService.projectionActive || StreamHub.uvcReady) return
+        if (!audioPermissionAsked &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            audioPermissionAsked = true
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 102)
+            return
+        }
+        requestingProjection = true
+        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        try {
+            val request = if (Build.VERSION.SDK_INT >= 34)
+                manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+            else manager.createScreenCaptureIntent()
+            startActivityForResult(request, 490)
+        } catch (e: Exception) {
+            requestingProjection = false
+            showStatus("画面共有の許可画面を開けません: " + e.message)
+        }
+    }
+
+    override fun onNewIntent(next: Intent) {
+        super.onNewIntent(next)
+        setIntent(next)
+        when (next.action) {
+            "com.karinlab.mymonitor.GRANT_SCREEN" -> beginScreenConsent()
+            "com.karinlab.mymonitor.UVC_RECORD" -> {
+                if (StreamHub.uvcReady) monitor.toggleRecording()
+            }
+            UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                messageHandler.postDelayed({ requestCameraForUvc(); if (cameraMounted) monitor.refreshUsb() }, 500)
+            }
         }
     }
 
@@ -109,7 +190,11 @@ class MainActivity : AppCompatActivity() {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 mountCamera()
                 scanUsbDevices()
-            } else showStatus("カメラ権限が拒否されました。端末の設定から許可してください")
+            } else showStatus("UVCカメラ権限が拒否されました")
+        }
+        if (requestCode == 102) {
+            // Screen capture still works without audio, but playback capture needs RECORD_AUDIO.
+            beginScreenConsent()
         }
     }
 
@@ -135,6 +220,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         expireMessage?.let { messageHandler.removeCallbacks(it) }
         if (receiverRegistered) { unregisterReceiver(usbReceiver); receiverRegistered = false }
+        StreamHub.statusSink = null
         super.onDestroy()
     }
 
@@ -186,6 +272,7 @@ class MainActivity : AppCompatActivity() {
     fun setRecording(active: Boolean) {
         runOnUiThread {
             recordingActive = active
+            StreamHub.uvcRecording = active
             if (active) {
                 record.text = "■ 停止"
                 expireMessage?.let { messageHandler.removeCallbacks(it) }
@@ -213,6 +300,19 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Android Activity callback")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 490) {
+            requestingProjection = false
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                ContextCompat.startForegroundService(this,
+                    Intent(this, ScreenStreamService::class.java).apply {
+                        action = ScreenStreamService.ACTION_PROJECTION
+                        putExtra("resultCode", resultCode)
+                        putExtra("projectionData", data)
+                    })
+                if (!hasUvcDevice()) moveTaskToBack(true)
+            } else showStatus("画面共有が許可されませんでした")
+            return
+        }
         if (requestCode == 47 && resultCode == Activity.RESULT_OK) {
             val uri = data?.data ?: return
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -238,7 +338,9 @@ class MainActivity : AppCompatActivity() {
                         val receiver = results.single()
                         prefs.edit().putString("windowsHost", receiver.host).putInt("windowsPort", receiver.port).apply()
                         showStatus("受信機1台を発見・" + receiver.host + " に自動接続")
-                        monitor.startWindows(receiver.host, receiver.port)
+                        StreamHub.enable()
+                        StreamHub.connect(receiver.host, receiver.port)
+                        if (!StreamHub.uvcReady) beginScreenConsent()
                     }
                     else -> {
                         val items = results.map { it.host + ":" + it.port }.toTypedArray()
@@ -247,7 +349,9 @@ class MainActivity : AppCompatActivity() {
                             .setItems(items) { _, index ->
                                 val receiver = results[index]
                                 prefs.edit().putString("windowsHost", receiver.host).putInt("windowsPort", receiver.port).apply()
-                                monitor.startWindows(receiver.host, receiver.port)
+                                StreamHub.enable()
+                                StreamHub.connect(receiver.host, receiver.port)
+                                if (!StreamHub.uvcReady) beginScreenConsent()
                             }
                             .setNeutralButton("IPを手入力") { _, _ -> windowsSettings() }
                             .setNegativeButton("キャンセル", null)
@@ -264,7 +368,7 @@ class MainActivity : AppCompatActivity() {
         val port = EditText(this).apply { hint = "ポート"; setText(prefs.getInt("windowsPort", 57007).toString()); inputType = 2 }
         layout.addView(address); layout.addView(port)
         AlertDialog.Builder(this).setTitle("Windowsへ転送（映像のみ）").setView(layout)
-            .setNeutralButton("停止") { _, _ -> monitor.stopWindows() }
+            .setNeutralButton("停止") { _, _ -> StreamHub.stopStreaming() }
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("送信開始") { _, _ ->
                 val host = address.text.toString().trim()
@@ -272,7 +376,9 @@ class MainActivity : AppCompatActivity() {
                 if (host.isEmpty() || number == null || number !in 1..65535) showStatus("接続先とポートを確認してください")
                 else {
                     prefs.edit().putString("windowsHost", host).putInt("windowsPort", number).apply()
-                    monitor.startWindows(host, number)
+                    StreamHub.enable()
+                    StreamHub.connect(host, number)
+                    if (!StreamHub.uvcReady) beginScreenConsent()
                 }
             }.show()
     }

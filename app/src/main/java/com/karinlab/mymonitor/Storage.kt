@@ -1,6 +1,7 @@
 package com.karinlab.mymonitor
 
 import android.content.SharedPreferences
+import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import jcifs.context.SingletonContext
@@ -15,7 +16,7 @@ import java.io.FileInputStream
  */
 object Storage {
 
-    fun save(activity: MainActivity, file: File, mime: String, prefs: SharedPreferences, status: (String) -> Unit) {
+    fun save(activity: Context, file: File, mime: String, prefs: SharedPreferences, status: (String) -> Unit) {
         Thread {
             if (!file.isFile || file.length() == 0L) {
                 status("保存失敗: 元ファイルがありません")

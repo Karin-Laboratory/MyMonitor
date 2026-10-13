@@ -34,25 +34,25 @@ jobs:
           python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
       - name: Build bundled native UVC and APK
         run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor012.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor013.apk
       - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix python3-cairosvg python3-pil
       - name: Embed matching Android icon and compile standalone EXE
         run: |
           /usr/bin/python3 scripts/make_windows_icon.py
           cd windows
           x86_64-w64-mingw32-windres receiver.rc -O coff -o receiver-res.o
-          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver012.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32
+          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver013.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32 -lwinmm
       - name: Check packages and checksums
         run: |
-          test -s mymonitor012.apk
-          file mycastreceiver012.exe | grep 'PE32+'
-          sha256sum mymonitor012.apk mycastreceiver012.exe > SHA256SUMS.txt
+          test -s mymonitor013.apk
+          file mycastreceiver013.exe | grep 'PE32+'
+          sha256sum mymonitor013.apk mycastreceiver013.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor012
+          name: mymonitor013
           path: |
-            mymonitor012.apk
-            mycastreceiver012.exe
+            mymonitor013.apk
+            mycastreceiver013.exe
             TRANSFER.md
             SHA256SUMS.txt
   windows-test:
@@ -62,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor012 }
+        with: { name: mymonitor013 }
       - name: Test actual EXE with Full HD images
         shell: pwsh
         run: |
@@ -75,6 +75,11 @@ jobs:
           $image.Dispose()
           python windows/smoke_test.py test.jpg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify PCM audio port accepts audio packets
+        shell: pwsh
+        run: |
+          python windows/audio_test.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Two-minute stream soak with bad frames and reconnects
         shell: pwsh
         run: |
@@ -86,15 +91,15 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor012 }
+        with: { name: mymonitor013 }
       - name: Publish verified downloads
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.12 >/dev/null 2>&1; then
-            gh release upload v0.12 mymonitor012.apk mycastreceiver012.exe TRANSFER.md SHA256SUMS.txt --clobber
+          if gh release view v0.13 >/dev/null 2>&1; then
+            gh release upload v0.13 mymonitor013.apk mycastreceiver013.exe TRANSFER.md SHA256SUMS.txt --clobber
           else
-            gh release create v0.12 mymonitor012.apk mycastreceiver012.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 012 + Low-latency Windows Receiver' --notes 'MJPEG passthrough, automatic Android TCP reconnection, tolerance for individual corrupt JPEGs, frozen-frame indicator on disconnect, LAN discovery, Full HD, Windows soak-tested. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
+            gh release create v0.13 mymonitor013.apk mycastreceiver013.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 013 + Low-latency Windows Receiver' --notes 'One Android app: USB MJPEG and MediaProjection screen; low-latency screen JPEG + PCM16 internal audio over LAN; local H.264/AAC MP4 and SMB export; notification controls; automatic receiver discovery and reconnect. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
           fi

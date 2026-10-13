@@ -32,6 +32,7 @@ static bool readExact(SOCKET s, char* dst, int size) {
     while (size > 0 && alive) { int n = recv(s, dst, size, 0); if (n <= 0) return false; dst += n; size -= n; }
     return size == 0;
 }
+#include "audio_receiver.h"
 // Preserve the last valid image through transient disconnections.
 // It remains visibly marked as stale until a new frame arrives.
 static void updateLink(bool connected) {
@@ -165,7 +166,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                         graphics.Flush(FlushIntentionSync);
                     } else {
                         SetBkMode(back, TRANSPARENT); SetTextColor(back, RGB(210,210,210));
-                        wchar_t text[] = L"My Cast Receiver 012\nWaiting on TCP 57007\n\nPixel: Auto discover or IPv4 + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Video only";
+                        wchar_t text[] = L"My Cast Receiver 013\nWaiting on TCP 57007\n\nPixel: Auto discover or IPv4 + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Android screen + audio or UVC";
                         DrawText(back, text, -1, &r, DT_CENTER | DT_WORDBREAK);
                     }
                 }
@@ -204,7 +205,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if(listener != INVALID_SOCKET) closesocket(listener);
         GdiplusShutdown(token); WSACleanup(); return 1;
     }
-    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver012"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver013"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIcon(instance, MAKEINTRESOURCE(101));
     RegisterClass(&wc);
     // Actual VIDEO CLIENT AREA must be 1920x1080, excluding the window chrome.
@@ -220,11 +221,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     ShowWindow(windowHandle, show);
     worker = std::thread(receiveLoop);
     discoveryWorker = std::thread(discoveryLoop);
+    audioWorker = std::thread(audioLoop);
     MSG msg; while (GetMessage(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessage(&msg); }
     alive = false;
     closesocket(listener);
+    if (audioListener != INVALID_SOCKET) closesocket(audioListener);
     { std::lock_guard<std::mutex> g(lockSocket); if (peer != INVALID_SOCKET) shutdown(peer, SD_BOTH); }
     worker.join();
     discoveryWorker.join();
+    audioWorker.join();
     picture.reset(); GdiplusShutdown(token); WSACleanup(); return 0;
 }
