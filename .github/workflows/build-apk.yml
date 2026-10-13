@@ -60,17 +60,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { name: mymonitor019-android-and-icon }
-      - name: Compile Windows EXE natively using MSVC (not MinGW)
-        shell: cmd
+      - name: Compile Windows EXE natively using discovered MSVC (not MinGW)
+        shell: pwsh
         run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          if errorlevel 1 exit /b 1
-          cd windows
-          rc /nologo /fo receiver-res.res receiver.rc
-          if errorlevel 1 exit /b 1
-          cl /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE /Fe:..\mycastreceiver019.exe receiver.cpp receiver-res.res ws2_32.lib gdiplus.lib shlwapi.lib ole32.lib winmm.lib /link /SUBSYSTEM:WINDOWS /MACHINE:X64
-          if errorlevel 1 exit /b 1
-          cd ..
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe is missing on GitHub Windows runner" }
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "No installed MSVC C++ toolchain was found" }
+          $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
+          if (-not (Test-Path $vcvars)) { throw "MSVC environment script not found at $vcvars" }
+          Write-Host "Building native Windows EXE with MSVC from $vs"
+          $script = @(
+            "@echo off",
+            ('call "{0}"' -f $vcvars),
+            "if errorlevel 1 exit /b 1",
+            "cd windows",
+            "rc /nologo /fo receiver-res.res receiver.rc",
+            "if errorlevel 1 exit /b 1",
+            "cl /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE /Fe:..\mycastreceiver019.exe receiver.cpp receiver-res.res ws2_32.lib gdiplus.lib shlwapi.lib ole32.lib winmm.lib /link /SUBSYSTEM:WINDOWS /MACHINE:X64",
+            "if errorlevel 1 exit /b 1",
+            "cd .."
+          )
+          Set-Content -Path build-msvc-019.cmd -Value $script -Encoding ascii
+          & cmd.exe /d /c build-msvc-019.cmd
+          if ($LASTEXITCODE -ne 0) { throw "MSVC compilation or resource linking failed ($LASTEXITCODE)" }
+          if (-not (Test-Path mycastreceiver019.exe)) { throw "Missing MSVC output executable" }
       - name: Check Windows EXE metadata and Defender if available
         shell: pwsh
         run: |
