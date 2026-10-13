@@ -74,7 +74,7 @@ assert "PowerManager.PARTIAL_WAKE_LOCK" in service
 assert "refreshPowerLock()" in service
 assert "onTaskRemoved(" in service
 assert "onTrimMemory(" in service
-assert 'versionCode 18' in file("app/build.gradle")
+assert 'versionCode 19' in file("app/build.gradle")
 print("V017 POWER/LIFECYCLE CONTRACTS RETAINED (v018 preview supersedes ratio check)")
 
 # v018: the UVC image-size decision belongs to the parent viewport exactly once.
@@ -90,3 +90,21 @@ assert "fun centered(" in preview_geometry
 assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
 assert "versionCode 18" in file("app/build.gradle")
 print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
+
+# v019 audio lifecycle and Windows binary provenance.
+assert 'Intent.ACTION_SCREEN_OFF' in service
+assert 'Intent.ACTION_USER_PRESENT' in service
+assert 'Intent.ACTION_SCREEN_ON' in service
+assert 'restoreAudioAfterUnlock()' in service
+assert 'stopAudioCapture()' in service
+assert 'recoverAudioAfterFailure(' in service
+assert 'StreamHub.resumeAudioAfterUnlock()' in service
+assert 'audioSuspendedForLock' in service
+assert 'fun suspendAudioForScreenLock()' in hub
+assert 'fun resumeAudioAfterUnlock()' in hub
+assert 'playbackAudioAllowed' in hub
+assert "waveOutReset(device)" in file("windows/audio_receiver.h")
+assert "VERSIONINFO" in file("windows/receiver.rc")
+assert "msvc" in file(".github/workflows/build-apk.yml").lower()
+assert 'versionCode 19' in file("app/build.gradle")
+print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")

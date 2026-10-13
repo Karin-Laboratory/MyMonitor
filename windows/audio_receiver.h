@@ -42,6 +42,7 @@ static void audioLoop() {
         HWAVEOUT device = nullptr;
         if (waveOutOpen(&device, WAVE_MAPPER, &fmt, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR)
             device = nullptr; // Windows CI may have no physical audio device.
+        ULONGLONG lastOpenAttempt = GetTickCount64();
         struct Slot {
             WAVEHDR header{};
             std::vector<char> data;
@@ -56,10 +57,25 @@ static void audioLoop() {
             if (bytes == 0 || bytes > 38400 || bytes % 4) break;
             std::vector<char> pcm(bytes);
             if (!readExact(s, pcm.data(), bytes)) break;
+            // Audio devices can disappear/reappear after a PC locks or audio
+            // outputs switch. Keep video alive and retry only the audio sink.
+            if (!device && GetTickCount64() - lastOpenAttempt > 1000) {
+                lastOpenAttempt = GetTickCount64();
+                if (waveOutOpen(&device, WAVE_MAPPER, &fmt, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR)
+                    device = nullptr;
+            }
             if (!device) continue;
             Slot &slot = slots[at++ % slots.size()];
-            while (alive && slot.prepared && !(slot.header.dwFlags & WHDR_DONE))
+            const ULONGLONG slotWaitStart = GetTickCount64();
+            while (alive && slot.prepared && !(slot.header.dwFlags & WHDR_DONE)) {
+                if (GetTickCount64() - slotWaitStart > 800) {
+                    // A blocked waveOut device must never pin audio receiving
+                    // forever after a lock/unlock or output-device change.
+                    waveOutReset(device);
+                    break;
+                }
                 Sleep(2);
+            }
             if (!alive) break;
             if (slot.prepared) {
                 waveOutUnprepareHeader(device, &slot.header, sizeof(WAVEHDR));
@@ -72,8 +88,16 @@ static void audioLoop() {
             if (waveOutPrepareHeader(device, &slot.header, sizeof(WAVEHDR)) == MMSYSERR_NOERROR) {
                 slot.prepared = true;
                 if (waveOutWrite(device, &slot.header, sizeof(WAVEHDR)) != MMSYSERR_NOERROR) {
-                    waveOutUnprepareHeader(device, &slot.header, sizeof(WAVEHDR));
-                    slot.prepared = false;
+                    // Let the next PCM chunk reopen WAVE_MAPPER.
+                    waveOutReset(device);
+                    for (Slot &slt : slots) {
+                        if (slt.prepared) {
+                            waveOutUnprepareHeader(device, &slt.header, sizeof(WAVEHDR));
+                            slt.prepared = false;
+                        }
+                    }
+                    waveOutClose(device);
+                    device = nullptr;
                 }
             }
         }

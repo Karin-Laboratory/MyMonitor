@@ -6,13 +6,14 @@ on:
 concurrency:
   group: mymonitor-publish
   cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
-      - name: Verify v018 direct UVC preview / fit-center contracts
+      - name: Verify v019 source/lifecycle/audio/provenance contracts
         run: python3 scripts/spec_contract_test.py
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
@@ -28,36 +29,29 @@ jobs:
           if [ ! -f .signing/debug.keystore ]; then
             keytool -genkeypair -keystore .signing/debug.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
           fi
-      - name: Fetch pinned upstream UVC and apply MJPEG tap
+      - name: Fetch pinned UVC library and apply independent MJPEG tap
         run: |
           mkdir -p vendor
           git clone --depth 1 --branch 3.6.0 https://github.com/ernestp/AndroidUSBCamera.git vendor/AndroidUSBCamera
           test "$(git -C vendor/AndroidUSBCamera rev-parse HEAD)" = "09df386a46e6aef22e4a020105246b2c9805ed05"
           python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
-      - name: Build bundled native UVC and APK
+      - name: Build Android UVC/native and APK with unit tests
         run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor018.apk
-      - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix python3-cairosvg python3-pil
-      - name: Embed matching Android icon and compile standalone EXE
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor019.apk
+      - name: Create original monitor icon for native Windows build
         run: |
-          /usr/bin/python3 scripts/make_windows_icon.py
-          cd windows
-          x86_64-w64-mingw32-windres receiver.rc -O coff -o receiver-res.o
-          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver018.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32 -lwinmm
-      - name: Check packages and checksums
-        run: |
-          test -s mymonitor018.apk
-          file mycastreceiver018.exe | grep 'PE32+'
-          sha256sum mymonitor018.apk mycastreceiver018.exe > SHA256SUMS.txt
+          sudo apt-get update && sudo apt-get install -y python3-cairosvg python3-pil
+          python3 scripts/make_windows_icon.py
+          test -s windows/monitor.ico
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor018
+          name: mymonitor019-android-and-icon
           path: |
-            mymonitor018.apk
-            mycastreceiver018.exe
+            mymonitor019.apk
+            windows/monitor.ico
             TRANSFER.md
-            SPEC_FIX_018.md
-            SHA256SUMS.txt
+            SPEC_FIX_019.md
+
   windows-test:
     needs: build
     runs-on: windows-latest
@@ -65,8 +59,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor018 }
-      - name: Test actual EXE with Full HD images
+        with: { name: mymonitor019-android-and-icon }
+      - name: Compile Windows EXE natively using MSVC (not MinGW)
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          cd windows
+          rc /nologo /fo receiver-res.res receiver.rc
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE /Fe:..\mycastreceiver019.exe receiver.cpp receiver-res.res ws2_32.lib gdiplus.lib shlwapi.lib ole32.lib winmm.lib /link /SUBSYSTEM:WINDOWS /MACHINE:X64
+          if errorlevel 1 exit /b 1
+          cd ..
+      - name: Check Windows EXE metadata and Defender if available
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path ".\mycastreceiver019.exe").Path
+          $info = (Get-Item $exe).VersionInfo
+          if ($info.FileVersion -ne "0.19.0.0") { throw "PE version metadata missing: $($info.FileVersion)" }
+          $sig = Get-AuthenticodeSignature $exe
+          Write-Host "Authenticode status: $($sig.Status). Signing requires a trusted certificate not available in CI."
+          $defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
+          if ($defender -and $defender.AMServiceEnabled -and $defender.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $exe -ErrorAction Stop
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              @($_.Resources) -match [regex]::Escape("mycastreceiver019.exe")
+            })
+            if ($hits.Count -gt 0) { throw "Microsoft Defender detected the built executable: $($hits | Out-String)" }
+            Write-Host "Defender scan of hosted CI executable completed with no reported detection."
+          } else {
+            Write-Host "Defender scanning unavailable on this hosted runner; NOT a Defender-clean verdict."
+          }
+      - name: Test actual EXE with Full HD MJPEG and reconnect
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Drawing
@@ -78,46 +102,64 @@ jobs:
           $image.Dispose()
           python windows/smoke_test.py test.jpg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Burst frame low-latency ACK and async decoder diagnostics
+      - name: Check 140-frame early ACK and async decoder timing
         shell: pwsh
         run: |
           python windows/latency_test.py test.jpg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify receiver V2 identity and reject unrelated TCP/DHCP services
+      - name: Check verified UDP/TCP receiver discovery and false-host rejection
         shell: pwsh
         run: |
           python windows/discovery_test.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify PCM audio port accepts audio packets
+      - name: Three consecutive audio TCP sessions (screen lock/unlock regression)
         shell: pwsh
         run: |
           python windows/audio_test.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Two-minute stream soak with bad frames and reconnects
+      - name: Two-minute reliability and corrupted JPEG regression
         shell: pwsh
         run: |
           python windows/soak_test.py test.jpg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify published APK and MSVC EXE checksums
+        shell: pwsh
+        run: |
+          $files = @('mymonitor019.apk', 'mycastreceiver019.exe')
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $file"
+          }
+          Set-Content -Path SHA256SUMS.txt -Value $lines -Encoding ascii
+          foreach ($file in $files) { if (-not (Test-Path $file)) { throw "Missing $file" } }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mymonitor019-verified
+          path: |
+            mymonitor019.apk
+            mycastreceiver019.exe
+            TRANSFER.md
+            SPEC_FIX_019.md
+            SHA256SUMS.txt
+
   publish:
     needs: windows-test
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor018 }
-      - name: Publish verified downloads
+        with: { name: mymonitor019-verified }
+      - name: Publish only fully tested APK and MSVC EXE
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.18 >/dev/null 2>&1; then
-            gh release upload v0.18 mymonitor018.apk mycastreceiver018.exe TRANSFER.md SPEC_FIX_018.md SHA256SUMS.txt --clobber
-            # A same-version v016 correction must have release/tag AND binary
-            # assets point at the same tested commit, not an earlier attempt.
-            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.18" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
-            gh release edit v0.18 --target "${GITHUB_SHA}"
+          if gh release view v0.19 >/dev/null 2>&1; then
+            gh release upload v0.19 mymonitor019.apk mycastreceiver019.exe TRANSFER.md SPEC_FIX_019.md SHA256SUMS.txt --clobber
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.19" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+            gh release edit v0.19 --target "${GITHUB_SHA}"
           else
-            gh release create v0.18 mymonitor018.apk mycastreceiver018.exe TRANSFER.md SPEC_FIX_018.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 018 + Low-latency Windows Receiver' --notes 'Fix undersized/offset UVC preview observed in v017 screenshot: disable double aspect remeasurement and switch away from stale GLES viewport to direct native UVC SurfaceTexture; one geometry owner and screenshot-sized regressions. v015 low-latency Windows receiver pipeline unchanged.'
+            gh release create v0.19 mymonitor019.apk mycastreceiver019.exe TRANSFER.md SPEC_FIX_019.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 019 + Native Windows Receiver' --notes 'Restore Android internal audio capture and Windows PCM session after lock/unlock. Windows EXE now built from audited source with MSVC on Windows rather than MinGW. PE version metadata, SHA256 and native execution tests included. Unsigned binary may still be flagged by Defender or SmartScreen.'
           fi
-          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.18 --jq '.object.sha')" = "${GITHUB_SHA}"
+          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.19 --jq '.object.sha')" = "${GITHUB_SHA}"

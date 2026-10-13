@@ -47,6 +47,18 @@ class ScreenStreamService : Service() {
     private var audioThread: Thread? = null
     @Volatile private var captureAudio = false
     @Volatile private var audioRecord: AudioRecord? = null
+    @Volatile private var audioSuspendedForLock = false
+    private var audioRetryCount = 0
+    private var lockReceiverRegistered = false
+    private val lockStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> pauseAudioForLock()
+                Intent.ACTION_USER_PRESENT, Intent.ACTION_SCREEN_ON ->
+                    main.postDelayed({ restoreAudioAfterUnlock() }, 350)
+            }
+        }
+    }
     private var recorder: ScreenRecorder? = null
     private var width = 0
     private var height = 0
@@ -73,7 +85,7 @@ class ScreenStreamService : Service() {
             try {
                 val power = getSystemService(Context.POWER_SERVICE) as PowerManager
                 val lock = screenWakeLock ?: power.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK, "MyMonitor018:ActiveCapture").apply {
+                    PowerManager.PARTIAL_WAKE_LOCK, "MyMonitor019:ActiveCapture").apply {
                     setReferenceCounted(false)
                     screenWakeLock = this
                 }
@@ -99,6 +111,12 @@ class ScreenStreamService : Service() {
         // dataSync is not a perpetual live-stream foreground-service category.
         startForegroundWithType(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         powerHandler.post(powerPoll)
+        registerReceiver(lockStateReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        })
+        lockReceiverRegistered = true
         android.util.Log.i("MyMonitorPower", "FGS started (elapsed uptime=$uptime)")
         Thread({
             while (alive.get()) {
@@ -137,7 +155,7 @@ class ScreenStreamService : Service() {
         } else serviceAction(ACTION_RECORD, 21)
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_monitor)
-            .setContentTitle("MyMonitor 018")
+            .setContentTitle("MyMonitor 019")
             .setContentText(text)
             .setContentIntent(intentForActivity())
             .setOngoing(true)
@@ -217,7 +235,6 @@ class ScreenStreamService : Service() {
             ACTION_SOURCE_CHANGED -> {
                 // USB open/close changes notification actions and video source.
                 refreshPowerLock()
-                refreshPowerLock()
                 refreshNotification()
             }
             ACTION_STOP_SCREEN_RECORD -> {
@@ -272,7 +289,7 @@ class ScreenStreamService : Service() {
             height = size.second
             reader = createReader(width, height)
             val density = resources.displayMetrics.densityDpi
-            display = captured.createVirtualDisplay("MyMonitor018", width, height, density,
+            display = captured.createVirtualDisplay("MyMonitor019", width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, frameHandler)
             projectionActive = true
             StreamHub.projectionReady = true
@@ -348,45 +365,135 @@ class ScreenStreamService : Service() {
         } finally { image.close() }
     }
 
+    /**
+     * AudioPlaybackCapture is tied to MediaProjection, but its AudioRecord
+     * may become unusable after the handset locks. The screen-off event stops
+     * only the audio session. On unlock we recreate AudioRecord and the TCP
+     * MMA1 sender, leaving MediaProjection video and its consent token alone.
+     */
+    private fun pauseAudioForLock() {
+        if (audioSuspendedForLock) return
+        audioSuspendedForLock = true
+        StreamHub.suspendAudioForScreenLock()
+        stopAudioCapture()
+        android.util.Log.i("MyMonitorAudio", "screen OFF: AudioRecord released (video remains)")
+    }
+
+    private fun restoreAudioAfterUnlock() {
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        if (keyguard.isDeviceLocked) return
+        if (!audioSuspendedForLock) return
+        audioSuspendedForLock = false
+        audioRetryCount = 0
+        if (projectionActive && projection != null) {
+            stopAudioCapture()
+            startAudio(projection!!)
+            // A new MMA1 TCP connection makes Windows re-open waveOut as well.
+            StreamHub.resumeAudioAfterUnlock()
+            android.util.Log.i("MyMonitorAudio",
+                "user unlocked: recreated AudioRecord and Windows PCM TCP session")
+            notifyState(if (audioRecord != null) "ロック解除後の内部音声を再開"
+                else "画面共有は継続中。内部音声の再開に失敗しました", true)
+        } else {
+            // OS terminated the projection session: consent cannot be reused.
+            StreamHub.resumeAudioAfterUnlock()
+            android.util.Log.w("MyMonitorAudio",
+                "unlock: MediaProjection not valid; new user consent required")
+            notifyState("ロック解除後、画面共有の再許可が必要です。通知をタップ", true)
+        }
+    }
+
+    private fun stopAudioCapture() {
+        captureAudio = false
+        val old = audioRecord
+        audioRecord = null
+        try { old?.stop() } catch (_: Exception) { }
+        try { old?.release() } catch (_: Exception) { }
+        audioThread?.interrupt()
+        audioThread = null
+    }
+
+    private fun recoverAudioAfterFailure(failed: AudioRecord, code: Int) {
+        // A deliberate screen-lock stop also makes read() fail; do not start a
+        // new recorder while the phone remains locked or the projection ended.
+        if (audioRecord !== failed || !projectionActive || audioSuspendedForLock) return
+        android.util.Log.w("MyMonitorAudio",
+            "AudioRecord.read failed (" + code + "), recovery attempt " + (audioRetryCount + 1))
+        stopAudioCapture()
+        if (audioRetryCount++ >= 3) {
+            notifyState("内部音声の再開に失敗。画面共有を再許可してください", true)
+            return
+        }
+        main.postDelayed({
+            val activeProjection = projection
+            if (projectionActive && !audioSuspendedForLock && activeProjection != null) {
+                startAudio(activeProjection)
+                StreamHub.resumeAudioAfterUnlock()
+            }
+        }, 800L * audioRetryCount)
+    }
+
     private fun startAudio(captured: MediaProjection) {
+        if (!projectionActive || audioSuspendedForLock) return
         if (Build.VERSION.SDK_INT < 29 ||
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             notifyState("映像送信中（内部音声は録音権限が必要）")
             return
         }
+        if (audioRecord != null) return
+        var pending: AudioRecord? = null
         try {
             val audioConfig = AudioPlaybackCaptureConfiguration.Builder(captured)
-                .addMatchingUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                .addMatchingUsage(android.media.AudioAttributes.USAGE_GAME)
-                .addMatchingUsage(android.media.AudioAttributes.USAGE_UNKNOWN)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
                 .build()
             val minSize = AudioRecord.getMinBufferSize(48000, AudioFormat.CHANNEL_IN_STEREO,
                 AudioFormat.ENCODING_PCM_16BIT)
+            require(minSize > 0) { "invalid AudioRecord buffer size " + minSize }
             val record = AudioRecord.Builder()
                 .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .setSampleRate(48000).setChannelMask(AudioFormat.CHANNEL_IN_STEREO).build())
                 .setAudioPlaybackCaptureConfig(audioConfig)
                 .setBufferSizeInBytes(maxOf(minSize, 3840 * 4))
                 .build()
-            if (record.state != AudioRecord.STATE_INITIALIZED) {
-                record.release()
-                notifyState("内部音声を初期化できません")
-                return
+            pending = record
+            check(record.state == AudioRecord.STATE_INITIALIZED) {
+                "AudioRecord was not initialized"
+            }
+            record.startRecording()
+            check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                "AudioRecord did not enter RECORDING state"
             }
             audioRecord = record
+            pending = null
             captureAudio = true
-            record.startRecording()
             audioThread = Thread({
-                val pcm = ByteArray(3840) // 20ms 48kHz stereo PCM16
-                while (captureAudio && projectionActive) {
-                    val n = record.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING)
+                val pcm = ByteArray(3840)
+                while (captureAudio && projectionActive && audioRecord === record) {
+                    val n = try {
+                        record.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING)
+                    } catch (e: Exception) {
+                        android.util.Log.w("MyMonitorAudio", "AudioRecord read exception", e)
+                        AudioRecord.ERROR_DEAD_OBJECT
+                    }
+                    if (!captureAudio || audioRecord !== record) break
+                    if (n < 0) {
+                        main.post { recoverAudioAfterFailure(record, n) }
+                        break
+                    }
                     if (n > 0 && !StreamHub.uvcReady) {
                         StreamHub.offerAudio(pcm, n)
                         recorder?.offerAudio(pcm, n)
                     }
                 }
             }, "MyMonitorPlaybackAudio").also { it.isDaemon = true; it.start() }
+            android.util.Log.i("MyMonitorAudio", "AudioRecord started: 48kHz stereo PCM16")
         } catch (e: Exception) {
+            captureAudio = false
+            if (audioRecord === pending) audioRecord = null
+            try { pending?.release() } catch (_: Exception) {}
+            android.util.Log.e("MyMonitorAudio", "AudioPlaybackCapture start failed", e)
             notifyState("内部音声取得不可: " + e.message)
         }
     }
@@ -425,10 +532,7 @@ class ScreenStreamService : Service() {
         projectionActive = false
         StreamHub.projectionReady = false
         refreshPowerLock()
-        captureAudio = false
-        try { audioRecord?.stop() } catch (_: Exception) { }
-        try { audioRecord?.release() } catch (_: Exception) { }
-        audioRecord = null
+        stopAudioCapture()
         if (recorder != null) stopScreenRecord()
         screenRecording = false
         reader?.setOnImageAvailableListener(null, null)
@@ -462,6 +566,10 @@ class ScreenStreamService : Service() {
         android.util.Log.w("MyMonitorPower", "Service stopped uptime=" +
             (android.os.SystemClock.elapsedRealtime() - uptime) + "ms")
         alive.set(false)
+        if (lockReceiverRegistered) {
+            try { unregisterReceiver(lockStateReceiver) } catch (_: Exception) { }
+            lockReceiverRegistered = false
+        }
         powerHandler.removeCallbacks(powerPoll)
         try { if (screenWakeLock?.isHeld == true) screenWakeLock?.release() } catch (_: Exception) { }
         closeProjection()

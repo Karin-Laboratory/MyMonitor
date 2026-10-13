@@ -26,11 +26,11 @@ def title(hwnd):
     user32.GetWindowTextW(hwnd, buf, len(buf))
     return buf.value
 
-proc = subprocess.Popen([str(Path("mycastreceiver018.exe").resolve())])
+proc = subprocess.Popen([str(Path("mycastreceiver019.exe").resolve())])
 hwnd = None
 try:
     for _ in range(150):
-        hwnd = user32.FindWindowW("MyCastReceiver018", None)
+        hwnd = user32.FindWindowW("MyCastReceiver019", None)
         if hwnd: break
         time.sleep(.1)
     assert hwnd, "Windows receiver process never opened a window"

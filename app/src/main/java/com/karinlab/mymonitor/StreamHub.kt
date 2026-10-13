@@ -33,6 +33,26 @@ object StreamHub {
 
     val sender = WindowsSender { statusSink?.invoke(it) }
     val audio = PcmSender()
+    /** Locking suspends capture audio, not the ongoing MJPEG/video transport. */
+    @Volatile private var playbackAudioAllowed = true
+
+    fun suspendAudioForScreenLock() {
+        playbackAudioAllowed = false
+        reconcileAsync()
+        Log.i("MyMonitorAudio", "Screen locked: audio TCP will close, video remains active")
+    }
+
+    fun resumeAudioAfterUnlock() {
+        playbackAudioAllowed = true
+        // A formerly live socket can be stale after a screen-lock audio-route
+        // change. Force a fresh MMA1 TCP session so WinMM waveOut is reopened.
+        executor.execute {
+            audio.stop()
+            audio.awaitStopped()
+            reconcile()
+            Log.i("MyMonitorAudio", "Screen unlocked: rebuilt Windows audio socket")
+        }
+    }
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "MyMonitorConnection").apply { isDaemon = true }
     }
@@ -194,7 +214,7 @@ object StreamHub {
             activeHost = host
             activePort = selectedPort
         }
-        if (source() == CapturePolicy.Source.SCREEN) {
+        if (source() == CapturePolicy.Source.SCREEN && playbackAudioAllowed) {
             if (!audio.isRunning()) {
                 audio.awaitStopped()
                 audio.start(host!!)

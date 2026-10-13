@@ -11,7 +11,7 @@ import secrets
 import time
 from pathlib import Path
 
-exe = str(Path("mycastreceiver018.exe").resolve())
+exe = str(Path("mycastreceiver019.exe").resolve())
 proc = subprocess.Popen([exe])
 def read4(sock):
     data = b""
@@ -76,7 +76,7 @@ finally:
         u = ctypes.WinDLL("user32")
         u.FindWindowW.argtypes=[ctypes.c_wchar_p,ctypes.c_wchar_p]
         u.FindWindowW.restype=ctypes.c_void_p
-        hwnd = u.FindWindowW("MyCastReceiver018",None)
+        hwnd = u.FindWindowW("MyCastReceiver019",None)
         if hwnd: u.PostMessageW(hwnd,0x10,0,0)
         proc.wait(timeout=10)
     except Exception:
