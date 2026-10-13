@@ -61,8 +61,8 @@ class ScreenStreamService : Service() {
                 if (StreamHub.enabled) {
                     val count = StreamHub.scanAndConnect()
                     if (count > 0 && !projectionActive && !StreamHub.uvcReady)
-                        notifyState("Windows検出。タップして画面共有を許可")
-                    else if (projectionActive && StreamHub.sender.isRunning())
+                        notifyState("Windows受信機の実在を確認。タップして画面共有を許可")
+                    else if (projectionActive && StreamHub.sender.isConnected())
                         notifyState(if (StreamHub.uvcReady) "UVC映像を送信中" else "Android画面・内部音声を送信中")
                     else if (count > 1 && StreamHub.selectedHost == null)
                         notifyState("受信機が複数。アプリで接続先を選択")
@@ -95,7 +95,7 @@ class ScreenStreamService : Service() {
         } else serviceAction(ACTION_RECORD, 21)
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_monitor)
-            .setContentTitle("MyMonitor 013")
+            .setContentTitle("MyMonitor 014")
             .setContentText(text)
             .setContentIntent(intentForActivity())
             .setOngoing(true)
@@ -183,7 +183,7 @@ class ScreenStreamService : Service() {
             height = size.second
             reader = createReader(width, height)
             val density = resources.displayMetrics.densityDpi
-            display = captured.createVirtualDisplay("MyMonitor013", width, height, density,
+            display = captured.createVirtualDisplay("MyMonitor014", width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, frameHandler)
             projectionActive = true
             StreamHub.projectionReady = true

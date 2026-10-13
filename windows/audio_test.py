@@ -1,7 +1,7 @@
 """Windows CI: live audio channel contract independent of UVC JPEG."""
 import socket, struct, subprocess, time
 from pathlib import Path
-p = subprocess.Popen([str(Path("mycastreceiver013.exe").resolve())])
+p = subprocess.Popen([str(Path("mycastreceiver014.exe").resolve())])
 try:
     time.sleep(2)
     with socket.create_connection(("127.0.0.1",57009), timeout=5) as s:
@@ -19,7 +19,7 @@ finally:
         u=ctypes.WinDLL("user32")
         u.FindWindowW.argtypes=[ctypes.c_wchar_p,ctypes.c_wchar_p]
         u.FindWindowW.restype=ctypes.c_void_p
-        hwnd=u.FindWindowW("MyCastReceiver013",None)
+        hwnd=u.FindWindowW("MyCastReceiver014",None)
         if hwnd: u.PostMessageW(hwnd,0x10,0,0)
         p.wait(timeout=10)
     except Exception:

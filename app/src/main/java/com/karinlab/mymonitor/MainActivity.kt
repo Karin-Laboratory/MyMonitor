@@ -344,26 +344,24 @@ class MainActivity : AppCompatActivity() {
                 discoveringWindows = false
                 when (results.size) {
                     0 -> {
-                        showStatus("受信機が見つかりません。IPを手入力できます")
+                        showStatus("検証できるWindows受信機がありません。EXEを起動するかIPを入力")
                         windowsSettings()
                     }
                     1 -> {
                         val receiver = results.single()
-                        prefs.edit().putString("windowsHost", receiver.host).putInt("windowsPort", receiver.port).apply()
-                        showStatus("受信機1台を発見・" + receiver.host + " に自動接続")
                         StreamHub.enable()
-                        StreamHub.connect(receiver.host, receiver.port)
+                        StreamHub.connectVerified(receiver)
+                        showStatus("受信機を二重確認済み: " + receiver.name + " (" + receiver.host + ")")
                         if (!StreamHub.uvcReady) beginScreenConsent()
                     }
                     else -> {
-                        val items = results.map { it.host + ":" + it.port }.toTypedArray()
+                        val items = results.map { it.name + " (" + it.host + ":" + it.port + ")" }.toTypedArray()
                         AlertDialog.Builder(this)
                             .setTitle("受信機を" + results.size + "台発見（接続先を選択）")
                             .setItems(items) { _, index ->
                                 val receiver = results[index]
-                                prefs.edit().putString("windowsHost", receiver.host).putInt("windowsPort", receiver.port).apply()
                                 StreamHub.enable()
-                                StreamHub.connect(receiver.host, receiver.port)
+                                StreamHub.connectVerified(receiver)
                                 if (!StreamHub.uvcReady) beginScreenConsent()
                             }
                             .setNeutralButton("IPを手入力") { _, _ -> windowsSettings() }
@@ -380,18 +378,26 @@ class MainActivity : AppCompatActivity() {
         val address = EditText(this).apply { hint = "WindowsのIPv4アドレス"; setText(prefs.getString("windowsHost", "")); inputType = 1 }
         val port = EditText(this).apply { hint = "ポート"; setText(prefs.getInt("windowsPort", 57007).toString()); inputType = 2 }
         layout.addView(address); layout.addView(port)
-        AlertDialog.Builder(this).setTitle("Windowsへ転送（映像のみ）").setView(layout)
+        AlertDialog.Builder(this).setTitle("Windows受信機を確認して転送").setView(layout)
             .setNeutralButton("停止") { _, _ -> StreamHub.stopStreaming() }
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("送信開始") { _, _ ->
                 val host = address.text.toString().trim()
                 val number = port.text.toString().toIntOrNull()
-                if (host.isEmpty() || number == null || number !in 1..65535) showStatus("接続先とポートを確認してください")
+                if (host.isEmpty() || number == null || number !in 1..65535)
+                    showStatus("接続先とポートを確認してください")
                 else {
-                    prefs.edit().putString("windowsHost", host).putInt("windowsPort", number).apply()
+                    showStatus("受信機を確認中: " + host)
                     StreamHub.enable()
-                    StreamHub.connect(host, number)
-                    if (!StreamHub.uvcReady) beginScreenConsent()
+                    StreamHub.connectManual(host, number) { verified ->
+                        runOnUiThread {
+                            if (isFinishing || isDestroyed) return@runOnUiThread
+                            if (verified) {
+                                showStatus("受信機の実在を確認: " + host)
+                                if (!StreamHub.uvcReady) beginScreenConsent()
+                            } else showStatus("接続不可: " + host + " は My Cast Receiver と応答しません")
+                        }
+                    }
                 }
             }.show()
     }

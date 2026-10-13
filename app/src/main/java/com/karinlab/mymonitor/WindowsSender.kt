@@ -27,8 +27,16 @@ class WindowsSender(private val report: (String) -> Unit) {
     @Volatile private var worker: Thread? = null
     @Volatile private var socket: Socket? = null
     @Volatile private var awaitingAckSince = 0L
+    @Volatile private var connected = false
 
     fun isRunning() = running.get()
+    /** True only after the remote receiver ACKed an actual video frame. */
+    fun isConnected() = connected
+    fun awaitStopped(timeoutMs: Long = 2500) {
+        val thread = worker
+        if (thread != null && thread !== Thread.currentThread())
+            try { thread.join(timeoutMs) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+    }
 
     /** Native UVC owns the ByteBuffer; copy before the callback returns. */
     @Synchronized fun offerJpeg(buffer: ByteBuffer) {
@@ -67,6 +75,7 @@ class WindowsSender(private val report: (String) -> Unit) {
         if (!running.compareAndSet(false, true)) return
         lastMjpeg = 0L
         lastOffered = 0L
+        connected = false
         frames.clear()
         worker = Thread({
             var failures = 0
@@ -88,8 +97,10 @@ class WindowsSender(private val report: (String) -> Unit) {
                             val out = DataOutputStream(s.getOutputStream())
                             val input = s.getInputStream()
                             out.writeBytes("MMC9")
-                            report("Windows接続済み・映像送信中（MJPEG優先）")
+                            report("受信機へTCP接続済み。映像フレーム待機中")
                             awaitingAckSince = 0L
+                            var firstFrame = true
+                            var lastSentAt = SystemClock.elapsedRealtime()
                             // SO_TIMEOUT covers ACK reads but NOT writes. A stalled Wi-Fi
                             // TCP write may otherwise block forever. Close that socket
                             // after 8s so this worker can automatically reconnect.
@@ -104,7 +115,22 @@ class WindowsSender(private val report: (String) -> Unit) {
                                 }
                             }, "WindowsSendWatchdog").apply { isDaemon = true; start() }
                             while (running.get()) {
-                                var frame = frames.poll(500, TimeUnit.MILLISECONDS) ?: continue
+                                val polled = frames.poll(500, TimeUnit.MILLISECONDS)
+                                if (polled == null) {
+                                    // A static Android screen may deliver no new ImageReader
+                                    // buffers for >5s. Heartbeat prevents false disconnects.
+                                    if (SystemClock.elapsedRealtime() - lastSentAt >= 1500L) {
+                                        awaitingAckSince = SystemClock.elapsedRealtime()
+                                        try {
+                                            out.writeInt(0) // MMC9 v014 heartbeat, no image
+                                            out.flush()
+                                            check(input.read() == 0x06) { "ハートビート応答なし" }
+                                            lastSentAt = SystemClock.elapsedRealtime()
+                                        } finally { awaitingAckSince = 0L }
+                                    }
+                                    continue
+                                }
+                                var frame = polled
                                 // Discard stale frames accumulated while the preceding JPEG was in flight.
                                 while (true) { frame = frames.poll() ?: break }
                                 val jpeg = if (frame.jpeg) frame.bytes else {
@@ -119,6 +145,12 @@ class WindowsSender(private val report: (String) -> Unit) {
                                     out.write(jpeg)
                                     out.flush()
                                     check(input.read() == 0x06) { "ACK不一致または接続切断" }
+                                    lastSentAt = SystemClock.elapsedRealtime()
+                                    connected = true
+                                    if (firstFrame) {
+                                        firstFrame = false
+                                        report("Windowsで映像受信を確認: " + host)
+                                    }
                                 } finally {
                                     awaitingAckSince = 0L
                                 }
@@ -133,6 +165,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                             }
                         }
                     } finally {
+                        connected = false
                         awaitingAckSince = 0L
                         try { s.close() } catch (_: Exception) {}
                         if (socket === s) socket = null
@@ -150,6 +183,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                     }
                 }
             } finally {
+                connected = false
                 running.set(false)
                 socket = null
                 frames.clear()
@@ -159,6 +193,7 @@ class WindowsSender(private val report: (String) -> Unit) {
 
     /** A deliberate stop must never be undone by the automatic reconnect. */
     fun stop() {
+        connected = false
         running.set(false)
         try { socket?.close() } catch (_: Exception) {}
         worker?.interrupt()

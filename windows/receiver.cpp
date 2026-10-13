@@ -15,6 +15,7 @@
 #include <string>
 #include <memory>
 #include <cstring>
+#include <cstdio>
 using namespace Gdiplus;
 static HWND windowHandle;
 static std::mutex lockFrame;
@@ -39,6 +40,8 @@ static void updateLink(bool connected) {
     linkConnected.store(connected);
     PostMessage(windowHandle, WM_APP, 0, 0);
 }
+// V014: replies include the exact random per-search nonce, so a DHCP server,
+// stale UDP packet or another kind of responder cannot be mistaken for our EXE.
 static void discoveryLoop() {
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s == INVALID_SOCKET) return;
@@ -54,15 +57,43 @@ static void discoveryLoop() {
     }
     DWORD timeout = 250;
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
-    const char request[] = "MYMONITOR_DISCOVER_V1";
-    const char response[] = "MYCAST_RECEIVER_V1|57007";
+    const std::string prefix = "MYMONITOR_DISCOVER_V2|";
+    const char legacyRequest[] = "MYMONITOR_DISCOVER_V1";
+    const char legacyReply[] = "MYCAST_RECEIVER_V1|57007";
+    char hostname[64] = "Windows";
+    DWORD hostLen = sizeof(hostname);
+    if (!GetComputerNameA(hostname, &hostLen)) std::strcpy(hostname, "Windows");
+    // Keep the discovery response small and ASCII-only.
+    for (char &ch : hostname) {
+        if (!ch) break;
+        if ((unsigned char)ch < 33 || (unsigned char)ch > 126 || ch == '|') ch = '_';
+    }
     while (alive) {
-        char buffer[128] = {};
+        char buffer[160] = {};
         sockaddr_in from{};
         int fromSize = sizeof(from);
         int size = recvfrom(s, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&from), &fromSize);
-        if (size == sizeof(request)-1 && std::memcmp(buffer, request, sizeof(request)-1) == 0) {
-            sendto(s, response, sizeof(response)-1, 0, reinterpret_cast<sockaddr*>(&from), fromSize);
+        if (size <= 0) continue;
+        if (size == sizeof(legacyRequest)-1 &&
+            std::memcmp(buffer, legacyRequest, sizeof(legacyRequest)-1) == 0) {
+            // Backward compatibility: existing 012/013 senders can still find 014.
+            sendto(s, legacyReply, sizeof(legacyReply)-1, 0,
+                reinterpret_cast<sockaddr*>(&from), fromSize);
+            continue;
+        }
+        if (size == (int)prefix.size()+32 && std::memcmp(buffer, prefix.data(), prefix.size()) == 0) {
+            bool hex = true;
+            for (int i = 0; i < 32; ++i) {
+                const char ch = buffer[prefix.size()+i];
+                if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) {
+                    hex = false; break;
+                }
+            }
+            if (!hex) continue;
+            std::string reply = "MYCAST_RECEIVER_V2|" +
+                std::string(buffer + prefix.size(), 32) + "|57007|" + hostname;
+            sendto(s, reply.data(), static_cast<int>(reply.size()), 0,
+                reinterpret_cast<sockaddr*>(&from), fromSize);
         }
     }
     closesocket(s);
@@ -73,19 +104,39 @@ static void receiveLoop() {
     while (alive) {
         SOCKET s = accept(listener, nullptr, nullptr);
         if (s == INVALID_SOCKET) break;
-        { std::lock_guard<std::mutex> g(lockSocket); if (!alive) { closesocket(s); break; } peer = s; }
         BOOL noDelay = TRUE;
         setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&noDelay), sizeof(noDelay));
         DWORD timeout = 5000;
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
         setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
         char magic[4];
-        bool valid = readExact(s, magic, 4) && memcmp(magic, "MMC9", 4) == 0;
-        while (alive && valid) {
+        const bool readOk = readExact(s, magic, 4);
+        if (readOk && std::memcmp(magic, "MCP1", 4) == 0) {
+            // V014 TCP proof: an actual MyCastReceiver process MUST answer MCR1.
+            // Do not mark the streaming link online for discovery-only connections.
+            const char proof[] = "MCR1";
+            send(s, proof, 4, 0);
+            closesocket(s);
+            continue;
+        }
+        const bool valid = readOk && std::memcmp(magic, "MMC9", 4) == 0;
+        if (!valid) {
+            closesocket(s);
+            continue;
+        }
+        { std::lock_guard<std::mutex> g(lockSocket); if (!alive) { closesocket(s); break; } peer = s; }
+        while (alive) {
             uint32_t networkLength;
             if (!readExact(s, reinterpret_cast<char*>(&networkLength), 4)) break;
             uint32_t n = ntohl(networkLength);
-            if (n == 0 || n > 8 * 1024 * 1024) break;
+            if (n == 0) {
+                // No new video yet, but keep the TCP stream alive. Still frame
+                // and Android MediaProjection idle are not network failures.
+                const char ack = 0x06;
+                if (send(s, &ack, 1, 0) != 1) break;
+                continue;
+            }
+            if (n > 8 * 1024 * 1024) break;
             std::vector<unsigned char> bytes(n);
             if (!readExact(s, reinterpret_cast<char*>(bytes.data()), static_cast<int>(n))) break;
             // A single malformed/incomplete MJPEG frame must NOT tear down the TCP
@@ -166,7 +217,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                         graphics.Flush(FlushIntentionSync);
                     } else {
                         SetBkMode(back, TRANSPARENT); SetTextColor(back, RGB(210,210,210));
-                        wchar_t text[] = L"My Cast Receiver 013\nWaiting on TCP 57007\n\nPixel: Auto discover or IPv4 + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Android screen + audio or UVC";
+                        wchar_t text[] = L"My Cast Receiver 014\nWaiting on TCP 57007\n\nPixel: Auto discover or IPv4 + port 57007\nOBS: Window Capture -> My Cast Receiver\nFull HD / Android screen + audio or UVC";
                         DrawText(back, text, -1, &r, DT_CENTER | DT_WORDBREAK);
                     }
                 }
@@ -205,7 +256,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if(listener != INVALID_SOCKET) closesocket(listener);
         GdiplusShutdown(token); WSACleanup(); return 1;
     }
-    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver013"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    WNDCLASS wc{}; wc.lpfnWndProc = windowProc; wc.hInstance = instance; wc.lpszClassName = L"MyCastReceiver014"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIcon(instance, MAKEINTRESOURCE(101));
     RegisterClass(&wc);
     // Actual VIDEO CLIENT AREA must be 1920x1080, excluding the window chrome.

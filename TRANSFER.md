@@ -1,42 +1,51 @@
-# MyMonitor v0.13: Android screen + UVC in one app
+# MyMonitor 014 / MyCastReceiver 014
 
-## Deliverables
+## Fixed: wrong Windows receiver detected (including 192.168.0.88)
 
-- **mymonitor013.apk**: one Android application for USB HDMI/UVC preview, automatic Windows casting, MediaProjection screen capture, internal playback audio, recordings and SMB/local exports. This replaces the planned separate MyCast sender APK.
-- **mycastreceiver013.exe**: one Windows x64 EXE compatible with v012's MMC9 MJPEG sender. Receives smartphone screen JPEG and UVC's passthrough MJPEG on TCP 57007, plus internal audio PCM16/48kHz stereo on TCP 57009. Receiver discovery UDP 57008.
-- **Recording:** UVC video capture retains existing video-only MP4, photos and SMB export; screen recording uses MediaCodec H.264 video and AAC when internal-audio capture is available (otherwise video-only) saved to MP4 locally, then exported asynchronously to local SAF folder and/or SMB.
+v013 could treat an unverified discovery address as a real receiver, saving that IP before the TCP/video stream succeeded. A forwarded UDP response or an old stored address such as an ARM DHCP server could be shown as an auto-connected target. Android also opened the TCP connection before UVC or MediaProjection supplied frames, causing an idle-timeout loop during screen-sharing permission prompts.
 
-## Start and permissions
+v014 checks the receiver in TWO stages:
 
-1. Start mycastreceiver013.exe. Close previous receiver versions first. Allow TCP **57007**, **57009** and UDP **57008** on trusted Private LAN/Wi-Fi only.
-2. Open MyMonitor013 on the phone. It starts an ongoing foreground notification and discovers LAN receivers. Exactly one receiver connects automatically; when several receivers appear, the last selected/remembered receiver wins, otherwise the user chooses from the existing receiver picker.
-3. **User consent is mandatory for every Android screen-sharing session.** If the receiver is found while the app is open, Android asks for MediaProjection permission. Grant it; MyMonitor returns to the home screen and streams the screen. If the receiver appeared later while the app was backgrounded, tap the foreground notification to grant screen capture. The app cannot silently bypass Android's consent dialog.
-4. Grant the RECORD_AUDIO permission for internal playback sound. Only other apps' capturable playback (media/game/unknown usage and allowed capture policy) can be sent; DRM-protected material and some apps do not permit capture.
-5. Plug in a UVC capture adapter and grant USB/camera access. When the Android system delivers the USB attach intent and launches MyMonitor, the UVC preview takes priority; the receiver switches to UVC MJPEG automatically. On unplug it returns to the still-running screen projection, if valid. Android restrictions may require tapping the UVC/notification to bring the app forward.
-6. Notification: recording start/stop, streaming stop and exit. A deliberate streaming stop persists until the user explicitly starts streaming again in-app. The projection may require fresh consent if it was stopped by Android.
-7. Screen changes between portrait/landscape: MediaProjection's display is resized, retaining aspect ratio with a **1920x1080 landscape / 1080x1920 portrait maximum**. Receiver uses fixed initial 1920x1080 video area, preserves aspect ratio, and allows manual resizing.
+1. Android sends a UDP 57008 discovery request MYMONITOR_DISCOVER_V2 with a fresh 128-bit random nonce. Windows echoes that exact nonce and advertises its computer name and TCP 57007. The Android app rejects stale, mismatched and legacy replies.
+2. Android directly connects to the response source IP on TCP 57007 and sends MCP1. Only the actual v014 Windows receiver answers MCR1. A DHCP server, broadcast relay or other service is rejected even if it caused UDP discovery traffic.
 
-## Live codec decision
+Manual IP input MUST also pass the direct TCP identity check before it is saved. Receiver discovery, TCP connection and actual first JPEG ACK now have distinct status messages: the app never calls a mere UDP reply a successful video connection.
 
-**Live screen video deliberately uses JPEG rather than H.264, and internal audio uses PCM16 rather than AAC.** On trusted high-bandwidth home LAN, this keeps the already-proven low-queue MMC9 transport and avoids H.264 buffering, new Media Foundation decoder requirements and A/V jitter buffers. Sound is received using built-in Windows winmm waveOut; OBS may capture it via desktop audio. **MP4 files** are encoded H.264/AAC, not JPEG/PCM.
+## Connection reliability
 
-The v012 "one JPEG in flight + ACK + newest frame" policy, TCP watchdog and automatic reconnect remain. Stream and recording use separate queues: slow SMB uploads or MP4 encoding do not directly add frames to the network send queue.
+- Do not open the video socket until a UVC source is OPENED or the user has consented to screen MediaProjection.
+- Source changes and endpoint switching run through a serialized connection manager that waits for the old sender thread to stop before starting a replacement.
+- A static screen sends an MMC9 v014 zero-length heartbeat approximately every 1.5 seconds, acknowledged by Windows, without inventing video frames.
+- v012 one-frame ACK MJPEG sender, watchdog, reconnect backoff, corrupt JPEG skip and last-frame warning remain in place.
+- The 014 Windows EXE also accepts legacy MMC9 JPEG frames from older Android versions; v014 Android sender requires a v014 receiver for discovery verification and heartbeat support.
+- Internal-audio PCM16 48kHz stereo is still sent over TCP 57009; H.264/AAC MP4 recording and folder/SMB export are unchanged.
 
-## Limitations to confirm on real devices
+## Installation
 
-- No userless MediaProjection activation. Each session needs permission; system can terminate it when screen locks, another projection starts or the user presses Stop. Notifications are the recovery path.
-- On some Android releases, automatic foreground launch after USB insertion is restricted. The USB class filter provides OS-assisted opening when possible; otherwise the user must tap the ongoing notification.
-- The foreground service itself is subject to OS background limits, battery saver, and notification permissions. "Permanent" service lifecycle is not guaranteed.
-- The on-device H.264/AAC recording encoder depends on MediaCodec YUV420Flex support and availability of AudioPlaybackCapture. Screen recording falls back to video-only MP4 when audio permission or capture is unavailable. Recording frame conversion costs CPU, so capture/record stress on the user's exact phone remains to be verified.
-- UVC recording is video only in v013, as in v012. If the USB device itself supplies audio, that is not added here.
-- 013 Windows and Android audio is a separate TCP stream; there is no clock-corrected A/V sync engine. This is deliberately biased toward minimum perceived lag and may produce lip-sync offsets on congested WLAN.
-- CI tests build the APK+EXE, decode synthetic Full HD MJPEG, test reconnection and corrupt frames, perform a 2+ minute video soak, and inject synthetic PCM. It cannot confirm actual on-phone MediaProjection, UVC capture, MediaCodec MP4 or speaker audio without real devices.
-- Windows application runs on a single EXE using GDI+/winmm; no DLL download or additional runtime.
-- Sender TCP/UDP protocols are unauthenticated and unencrypted. **Do not forward TCP 57007/57009 or UDP 57008 outside trusted home LAN.**
+1. Close any older MyCastReceiver EXE. Start mycastreceiver014.exe on the actual Windows computer.
+2. Permit UDP 57008 and TCP 57007/57009 on the Windows Private network firewall profile, never a public internet-forwarded port.
+3. Update to mymonitor014.apk; do not uninstall first unless necessary, to preserve folder and SMB settings.
+4. Start MyMonitor. Automatic search selects only receivers proven by BOTH the UDP nonce and the direct TCP proof. If the saved address 192.168.0.88 is merely the ARM DHCP server, it will be ignored.
+5. For a smartphone screen, grant the Android screen-sharing permission for the current session (and internal-audio permission if desired). With USB UVC, the UVC preview takes priority.
+6. For multiple verified receivers, select the computer by displayed Windows hostname plus IP. Only a previously remembered AND currently verified receiver may be chosen automatically.
+7. If no verified receiver appears, enter the actual Windows computer IPv4 address manually in Windowsへ転送. A validation failure indicates EXE not reachable or incorrect IP/firewall; the bogus IP is not saved.
 
-## Release / rollback
+## CI coverage
 
-CI uses the same cached debug signing key as v0.12. v0.12 releases remain available:
-https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.12
+- Android + pinned libuvc source compiled and Windows x64 standalone EXE generated.
+- End-to-end Windows UDP nonce echo and TCP MCP1/MCR1 proof, false host response and closed port rejection.
+- Full HD MJPEG ACK, corrupt JPEG skip and reconnect; seven seconds of heartbeat on a static screen.
+- PCM internal-audio listener; 650-frame and >2-minute stream soak with 13 corrupt frames and five deliberate reconnections.
+- SHA-256 check of APK and EXE before release.
 
-Use the matching v0.13 APK+EXE together. Older UVC sender 012 is also compatible with EXE 013 over MMC9. Ensure you have locally backed up recordings and SMB settings before changing debug signing identity or uninstalling.
+CI cannot exercise the user's exact household network, Pixel, USB hardware, physical Windows firewall or actual MediaProjection audio/video. Real-device verification remains necessary. Discovery and streaming are for trusted LAN only; this handshake proves receiver implementation but is not cryptographic host authentication.
+
+## Files and rollback
+
+- Android: mymonitor014.apk
+- Windows: mycastreceiver014.exe
+- GitHub source: https://github.com/Karin-Laboratory/MyMonitor
+- Rollback: https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.12
+- v013 archive: https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.13
+
+The same package ID and cached development signing key are retained for in-place Android upgrades when the key cache is still valid.
