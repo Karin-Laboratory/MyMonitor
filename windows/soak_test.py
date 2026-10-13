@@ -20,7 +20,7 @@ u.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
 u.FindWindowW.restype = ctypes.c_void_p
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
 u.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
-process = subprocess.Popen([str(Path("mycastreceiver014.exe").resolve())])
+process = subprocess.Popen([str(Path("mycastreceiver015.exe").resolve())])
 s = None
 hwnd = None
 
@@ -33,7 +33,7 @@ def connect():
 try:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        hwnd = u.FindWindowW("MyCastReceiver014", None)
+        hwnd = u.FindWindowW("MyCastReceiver015", None)
         if hwnd:
             break
         time.sleep(.1)
@@ -53,7 +53,11 @@ try:
             bad_count += 1
         time.sleep(.195)
     title = ctypes.create_unicode_buffer(256)
-    u.GetWindowTextW(hwnd, title, 256)
+    for _ in range(50):
+        u.GetWindowTextW(hwnd, title, 256)
+        if ("1920 x 1080" in title.value and
+            f"skipped {bad_count} bad frames" in title.value): break
+        time.sleep(.1)
     assert "1920 x 1080" in title.value, f"Frame lost: {title.value}"
     assert f"skipped {bad_count} bad frames" in title.value, title.value
     elapsed = time.monotonic() - start

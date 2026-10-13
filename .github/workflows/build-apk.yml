@@ -34,25 +34,25 @@ jobs:
           python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
       - name: Build bundled native UVC and APK
         run: gradle :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor014.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor015.apk
       - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix python3-cairosvg python3-pil
       - name: Embed matching Android icon and compile standalone EXE
         run: |
           /usr/bin/python3 scripts/make_windows_icon.py
           cd windows
           x86_64-w64-mingw32-windres receiver.rc -O coff -o receiver-res.o
-          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver014.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32 -lwinmm
+          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver015.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32 -lwinmm
       - name: Check packages and checksums
         run: |
-          test -s mymonitor014.apk
-          file mycastreceiver014.exe | grep 'PE32+'
-          sha256sum mymonitor014.apk mycastreceiver014.exe > SHA256SUMS.txt
+          test -s mymonitor015.apk
+          file mycastreceiver015.exe | grep 'PE32+'
+          sha256sum mymonitor015.apk mycastreceiver015.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor014
+          name: mymonitor015
           path: |
-            mymonitor014.apk
-            mycastreceiver014.exe
+            mymonitor015.apk
+            mycastreceiver015.exe
             TRANSFER.md
             SHA256SUMS.txt
   windows-test:
@@ -62,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor014 }
+        with: { name: mymonitor015 }
       - name: Test actual EXE with Full HD images
         shell: pwsh
         run: |
@@ -74,6 +74,11 @@ jobs:
           $g.Dispose()
           $image.Dispose()
           python windows/smoke_test.py test.jpg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Burst frame low-latency ACK and async decoder diagnostics
+        shell: pwsh
+        run: |
+          python windows/latency_test.py test.jpg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify receiver V2 identity and reject unrelated TCP/DHCP services
         shell: pwsh
@@ -96,15 +101,15 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor014 }
+        with: { name: mymonitor015 }
       - name: Publish verified downloads
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.14 >/dev/null 2>&1; then
-            gh release upload v0.14 mymonitor014.apk mycastreceiver014.exe TRANSFER.md SHA256SUMS.txt --clobber
+          if gh release view v0.15 >/dev/null 2>&1; then
+            gh release upload v0.15 mymonitor015.apk mycastreceiver015.exe TRANSFER.md SHA256SUMS.txt --clobber
           else
-            gh release create v0.14 mymonitor014.apk mycastreceiver014.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 014 + Low-latency Windows Receiver' --notes 'Fix false receiver discovery: unpredictable UDP nonce V2 plus TCP MCP1/MCR1 identity validation, connect only after capture ready, keepalive heartbeats, low-latency MJPEG/PCM retained. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
+            gh release create v0.15 mymonitor015.apk mycastreceiver015.exe TRANSFER.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 015 + Low-latency Windows Receiver' --notes 'Low-latency Windows pipeline: ACK after packet receipt, one-frame latest-only asynchronous JPEG decode, DIB fast BitBlt rendering, sender/receiver latency diagnostics. v014 verified discovery/heartbeat retained. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
           fi

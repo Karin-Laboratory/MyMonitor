@@ -13,12 +13,12 @@ u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctyp
 u.SendMessageW.restype = ctypes.c_ssize_t
 u.PostMessageW.argtypes = u.SendMessageW.argtypes
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-process = subprocess.Popen([str(Path('mycastreceiver014.exe').resolve())])
+process = subprocess.Popen([str(Path('mycastreceiver015.exe').resolve())])
 try:
     deadline = time.monotonic() + 15
     hwnd = None
     while time.monotonic() < deadline:
-        hwnd = u.FindWindowW('MyCastReceiver014', None)
+        hwnd = u.FindWindowW('MyCastReceiver015', None)
         if hwnd: break
         time.sleep(.1)
     assert hwnd, 'Receiver window not created'
@@ -67,13 +67,16 @@ try:
         bad = b'broken-JPEG-no-SOI'
         s.sendall(struct.pack('!I', len(bad)) + bad)
         assert s.recv(1) == b'\x06', 'Bad JPEG broke streaming connection'
-        s.sendall(packet)
-        assert s.recv(1) == b'\x06', 'Good frame not accepted after corrupt JPEG'
-        for _ in range(30):
+        # Decoder runs asynchronously in v015, so wait for the isolated
+        # corrupt packet to be evaluated before sending another JPEG that
+        # could correctly replace it in the one-slot latest-frame queue.
+        for _ in range(40):
             u.GetWindowTextW(hwnd, title, 256)
             if 'skipped 1 bad frames' in title.value: break
             time.sleep(.1)
         assert 'skipped 1 bad frames' in title.value, title.value
+        s.sendall(packet)
+        assert s.recv(1) == b'\x06', 'Good frame not accepted after corrupt JPEG'
         print('Corrupt MJPEG skipped with ACK, next valid frame accepted: PASS')
     # MediaProjection may pause on a static screen. Zero-length packets are
     # keepalive heartbeats in v014 and must not blank or drop the last video.
@@ -99,7 +102,7 @@ try:
     with socket.create_connection(('127.0.0.1', 57007), timeout=3) as s:
         s.sendall(b'MMC9' + packet)
         assert s.recv(1) == b'\x06', 'Reconnect failed'
-        for _ in range(30):
+        for _ in range(50):
             u.GetWindowTextW(hwnd, title, 256)
             if 'reconnecting' not in title.value: break
             time.sleep(.1)

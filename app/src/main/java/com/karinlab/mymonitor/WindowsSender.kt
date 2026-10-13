@@ -4,6 +4,7 @@ import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.os.SystemClock
+import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
@@ -20,7 +21,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class WindowsSender(private val report: (String) -> Unit) {
     private val running = AtomicBoolean(false)
-    private data class Frame(val bytes: ByteArray, val width: Int, val height: Int, val jpeg: Boolean)
+    private data class Frame(
+        val bytes: ByteArray, val width: Int, val height: Int,
+        val jpeg: Boolean, val capturedAtMs: Long
+    )
     private val frames = ArrayBlockingQueue<Frame>(1)
     private var lastOffered = 0L
     @Volatile private var lastMjpeg = 0L
@@ -53,7 +57,7 @@ class WindowsSender(private val report: (String) -> Unit) {
         buffer.get(data)
         lastOffered = now
         frames.poll()
-        frames.offer(Frame(data, 0, 0, true))
+        frames.offer(Frame(data, 0, 0, true, now))
     }
 
     /** Fallback if USB device isn't supplying valid compressed MJPEG. */
@@ -64,7 +68,7 @@ class WindowsSender(private val report: (String) -> Unit) {
         if (now - lastMjpeg < 1500L || now - lastOffered < 33L) return
         lastOffered = now
         frames.poll()
-        frames.offer(Frame(data.copyOf(), width, height, false))
+        frames.offer(Frame(data.copyOf(), width, height, false, now))
     }
 
     @Synchronized fun start(host: String, port: Int) {
@@ -101,6 +105,12 @@ class WindowsSender(private val report: (String) -> Unit) {
                             awaitingAckSince = 0L
                             var firstFrame = true
                             var lastSentAt = SystemClock.elapsedRealtime()
+                            var sampleWindowMs = lastSentAt
+                            var samples = 0
+                            var sumQueueAge = 0L
+                            var sumWriteMs = 0L
+                            var sumAckWaitMs = 0L
+                            var maxAckWaitMs = 0L
                             // SO_TIMEOUT covers ACK reads but NOT writes. A stalled Wi-Fi
                             // TCP write may otherwise block forever. Close that socket
                             // after 8s so this worker can automatically reconnect.
@@ -139,17 +149,41 @@ class WindowsSender(private val report: (String) -> Unit) {
                                         .compressToJpeg(Rect(0, 0, frame.width, frame.height), 75, bytes))
                                     bytes.toByteArray()
                                 }
-                                awaitingAckSince = SystemClock.elapsedRealtime()
+                                val writeStarted = SystemClock.elapsedRealtime()
+                                awaitingAckSince = writeStarted
                                 try {
                                     out.writeInt(jpeg.size)
                                     out.write(jpeg)
                                     out.flush()
+                                    val afterWrite = SystemClock.elapsedRealtime()
                                     check(input.read() == 0x06) { "ACK不一致または接続切断" }
                                     lastSentAt = SystemClock.elapsedRealtime()
                                     connected = true
                                     if (firstFrame) {
                                         firstFrame = false
-                                        report("Windowsで映像受信を確認: " + host)
+                                        // v015 ACK means complete packet received, not decoder/render success.
+                                        report("Windowsが映像パケットを受領: " + host)
+                                    }
+                                    // Diagnostic breakdown on the SENDER only.
+                                    // The Windows title shows separate JPEG decode / GDI paint timings.
+                                    samples++
+                                    sumQueueAge += (writeStarted - frame.capturedAtMs).coerceAtLeast(0L)
+                                    sumWriteMs += (afterWrite - writeStarted).coerceAtLeast(0L)
+                                    val wait = (lastSentAt - afterWrite).coerceAtLeast(0L)
+                                    sumAckWaitMs += wait
+                                    maxAckWaitMs = maxOf(maxAckWaitMs, wait)
+                                    if (lastSentAt - sampleWindowMs >= 5000L && samples > 0) {
+                                        Log.i("MyMonitorLatency", "v015 host=$host frames=$samples " +
+                                            "avg_queue_ms=${sumQueueAge / samples} " +
+                                            "avg_write_ms=${sumWriteMs / samples} " +
+                                            "avg_ack_wait_ms=${sumAckWaitMs / samples} " +
+                                            "max_ack_wait_ms=$maxAckWaitMs")
+                                        sampleWindowMs = lastSentAt
+                                        samples = 0
+                                        sumQueueAge = 0L
+                                        sumWriteMs = 0L
+                                        sumAckWaitMs = 0L
+                                        maxAckWaitMs = 0L
                                     }
                                 } finally {
                                     awaitingAckSince = 0L
