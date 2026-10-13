@@ -199,7 +199,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     fun startWindows(host: String, port: Int) {
         StreamHub.enable()
-        StreamHub.connect(host, port)
+        // Never connect to a saved/unverified host, even from the legacy UVC UI.
+        StreamHub.connectManual(host, port) { ok ->
+            status(if (ok) "受信機を確認済み。映像入力を待機中" else "Windows受信機を確認できません: " + host)
+        }
     }
     fun stopWindows() { StreamHub.stopStreaming(); status("Windows転送停止") }
 
