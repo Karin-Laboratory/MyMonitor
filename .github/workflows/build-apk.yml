@@ -12,7 +12,7 @@ jobs:
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
-      - name: Verify v017 spec and background power/orientation contracts
+      - name: Verify v018 direct UVC preview / fit-center contracts
         run: python3 scripts/spec_contract_test.py
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
@@ -36,27 +36,27 @@ jobs:
           python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
       - name: Build bundled native UVC and APK
         run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor017.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor018.apk
       - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix python3-cairosvg python3-pil
       - name: Embed matching Android icon and compile standalone EXE
         run: |
           /usr/bin/python3 scripts/make_windows_icon.py
           cd windows
           x86_64-w64-mingw32-windres receiver.rc -O coff -o receiver-res.o
-          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver017.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32 -lwinmm
+          x86_64-w64-mingw32-g++-posix receiver.cpp receiver-res.o -o ../mycastreceiver018.exe -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -municode -mwindows -lws2_32 -lgdiplus -lshlwapi -lole32 -lwinmm
       - name: Check packages and checksums
         run: |
-          test -s mymonitor017.apk
-          file mycastreceiver017.exe | grep 'PE32+'
-          sha256sum mymonitor017.apk mycastreceiver017.exe > SHA256SUMS.txt
+          test -s mymonitor018.apk
+          file mycastreceiver018.exe | grep 'PE32+'
+          sha256sum mymonitor018.apk mycastreceiver018.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor017
+          name: mymonitor018
           path: |
-            mymonitor017.apk
-            mycastreceiver017.exe
+            mymonitor018.apk
+            mycastreceiver018.exe
             TRANSFER.md
-            SPEC_AUDIT_017.md
+            SPEC_FIX_018.md
             SHA256SUMS.txt
   windows-test:
     needs: build
@@ -65,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor017 }
+        with: { name: mymonitor018 }
       - name: Test actual EXE with Full HD images
         shell: pwsh
         run: |
@@ -104,20 +104,20 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor017 }
+        with: { name: mymonitor018 }
       - name: Publish verified downloads
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.17 >/dev/null 2>&1; then
-            gh release upload v0.17 mymonitor017.apk mycastreceiver017.exe TRANSFER.md SPEC_AUDIT_017.md SHA256SUMS.txt --clobber
+          if gh release view v0.18 >/dev/null 2>&1; then
+            gh release upload v0.18 mymonitor018.apk mycastreceiver018.exe TRANSFER.md SPEC_FIX_018.md SHA256SUMS.txt --clobber
             # A same-version v016 correction must have release/tag AND binary
             # assets point at the same tested commit, not an earlier attempt.
-            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.17" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
-            gh release edit v0.17 --target "${GITHUB_SHA}"
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.18" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+            gh release edit v0.18 --target "${GITHUB_SHA}"
           else
-            gh release create v0.17 mymonitor017.apk mycastreceiver017.exe TRANSFER.md SPEC_AUDIT_017.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 017 + Low-latency Windows Receiver' --notes 'Power and orientation hardening: user-approved battery optimization exemption prompt, connected-device foreground service, active-capture CPU wake lock, background Activity UVC lifecycle preservation, fit-center HDMI preview geometry with portrait/landscape unit tests. v015 low latency and v016 discovery retained. No OS-kill exemption guaranteed.'
+            gh release create v0.18 mymonitor018.apk mycastreceiver018.exe TRANSFER.md SPEC_FIX_018.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 018 + Low-latency Windows Receiver' --notes 'Fix undersized/offset UVC preview observed in v017 screenshot: disable double aspect remeasurement and switch away from stale GLES viewport to direct native UVC SurfaceTexture; one geometry owner and screenshot-sized regressions. v015 low-latency Windows receiver pipeline unchanged.'
           fi
-          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.17 --jq '.object.sha')" = "${GITHUB_SHA}"
+          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.18 --jq '.object.sha')" = "${GITHUB_SHA}"

@@ -70,10 +70,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         }
         root.addView(placeholder, FrameLayout.LayoutParams(-1, -1))
         preview = AspectRatioTextureView(requireContext())
-        // The upstream TextureView recalculates its own aspect ratio, but its
-        // MATCH_PARENT parent never re-centers it reliably after rotation.
-        // Give it an explicit fit-center rectangle using REAL root bounds.
-        preview.setAspectRatio(inputWidth, inputHeight)
+        // Only OUR FrameLayout sizes the preview. The library's own
+        // AspectRatioTextureView aspect ratio must remain disabled to prevent
+        // a second, conflicting re-measure during landscape rotation.
+        // Direct UVC rendering bypasses its stale OpenGL viewport.
         root.addView(preview, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         root.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
             adjustPreviewViewport(right - left, bottom - top)
@@ -85,9 +85,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 refreshUsb()
             }
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
-                // Render to exactly the measured preview Surface, not the
-                // previous orientation's full-screen window dimensions.
-                if (width > 0 && height > 0) camera?.setRenderSize(width, height)
+                // The direct UVC SurfaceTexture follows measured sizes itself.
+                // AUSBC setRenderSize() affects only the one-shot GL startup
+                // future; calling it here does NOT update an existing GL viewport.
+                Log.i("MyMonitor-Preview", "UVC surface now ${width}x${height}")
             }
             override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
                 viewReady = false
@@ -163,10 +164,11 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             preview.layoutParams = FrameLayout.LayoutParams(
                 fitted.width, fitted.height, Gravity.CENTER)
         }
-        preview.setAspectRatio(inputWidth, inputHeight)
-        // TextureView surface resize callback updates the renderer as needed.
-        if (viewReady && ready && preview.width == fitted.width &&
-            preview.height == fitted.height) camera?.setRenderSize(fitted.width, fitted.height)
+        val rect = PreviewGeometry.centered(inputWidth, inputHeight, w, h)
+        Log.i("MyMonitor-Preview", "viewport=${w}x${h} UVC=${inputWidth}x${inputHeight} " +
+            "preview=${fitted.width}x${fitted.height} offset=${rect.left},${rect.top}")
+        // No library setAspectRatio() here: that used to apply aspect fitting
+        // a second time and could make the picture undersized/off-center.
     }
 
     fun updateSurfaceSize() {
@@ -225,8 +227,12 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 .setPreviewWidth(1920).setPreviewHeight(1080)
                 .setRawPreviewData(true)
                 .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
-                .setRenderMode(CameraRequest.RenderMode.OPENGL)
-                .setAspectRatioShow(true)
+                // NORMAL uses UVCCamera.setPreviewTexture directly; OPENGL
+                // cached its original EGL viewport, leaving a 480x270 picture
+                // after phone rotation despite a larger TextureView rectangle.
+                // Independent MJPEG passthrough and MP4/NV21 capture are kept.
+                .setRenderMode(CameraRequest.RenderMode.NORMAL)
+                .setAspectRatioShow(false)
                 .setAudioSource(CameraRequest.AudioSource.NONE)
                 .create()
             newCamera.openCamera(preview, request)

@@ -1,23 +1,9 @@
-# MyMonitor 017: first-use power permission and HDMI preview fit fix
+# MyMonitor 018
 
-### Installation
-Download and **update in place** `mymonitor017.apk`, and replace the older receiver with `mycastreceiver017.exe`. Keep the 015/016 builds for rollback, and stop prior Windows receiver processes before starting 017.
+**Issue:** user screenshot shows landscape UVC image much smaller and off center than the available viewport.
 
-When first starting v017, MyMonitor offers to open Android's battery-optimization exemption consent. Press **設定を開く**, then explicitly approve the Android permission if you want a longer-running cast. This is **not an installation-time automatic grant**. Android may still terminate an application for crash, user force-stop or resource pressure. If permission was declined, change it later via Android Settings > Apps > My Monitor > Battery.
+**Fix:** disable double aspect ratio fitting and use direct native UVC SurfaceTexture preview (no stale OpenGL viewport). The single Android-side `PreviewGeometry` utility fits and centers the video inside the viewport above the toolbar. Test case reproduces screenshot dimensions. Camera USB access, NV21 stills/MP4, independent MJPEG passthrough, low-latency Windows streaming, internal audio, verified receiver search, background/battery controls are preserved.
 
-UVC remains open across ordinary Android Activity onStop when its video Surface survives. If Android destroys the TextureView in the background, UVC may still close; fully headless USB capture is not implemented. Active streaming/recording uses a foreground connected-device service, ongoing notification and a bounded partial CPU wake lock. Android system MediaProjection consent is still required for screen transmission.
+**Files:** `mymonitor018.apk`, `mycastreceiver018.exe` (receiver only renamed; no video codec/latency changes). Please close any earlier EXE before running 018. Install APK on top of 017 to retain settings. Try several portrait/landscape rotations with an actual 16:9 HDMI source. Source and automated tests cannot prove physical Pixel preview behavior.
 
-### Display
-On phone rotation and changing toolbar visibility, the UVC preview is recalculated using the true viewport excluding the bottom controls. UVC 1920x1080 stays 16:9 in BOTH device orientations, centered with letterboxing, without rotating or cropping the HDMI source. The preview renderer uses the new measured Surface size.
-
-### What changed and did not
-- Android battery-optimization opt-in prompt and FGS/power lifecycle
-- UVC camera not forcibly closed on Activity background
-- Aspect-correct, fit-center preview geometry with JVM tests
-- Windows binary relabeled 017, video pipeline unchanged
-- Existing LAN discovery, receiver reconnect, screen audio, notification buttons, MP4/SMB and v015 low latency retained
-
-### Verification
-The included GitHub CI performs Android native+APK build, v017 geometry/power contract tests, Windows synthetic video + PCM audio + receiver authentication + >2 minute reliability soak. The **91-second Android survival** and actual physical rotated HDMI placement must be tested on the device.
-
-Details: `SPEC_AUDIT_017.md`.
+**Test:** `gradle :app:testDebugUnitTest :app:assembleDebug`, including exact 1080x428 screenshot fit-center regression, then existing full Windows stream/PCM/identity/reconnect/soak tests. GitHub Release publishes after all checks pass.

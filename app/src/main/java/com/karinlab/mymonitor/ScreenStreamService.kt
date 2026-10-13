@@ -73,7 +73,7 @@ class ScreenStreamService : Service() {
             try {
                 val power = getSystemService(Context.POWER_SERVICE) as PowerManager
                 val lock = screenWakeLock ?: power.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK, "MyMonitor017:ActiveCapture").apply {
+                    PowerManager.PARTIAL_WAKE_LOCK, "MyMonitor018:ActiveCapture").apply {
                     setReferenceCounted(false)
                     screenWakeLock = this
                 }
@@ -137,7 +137,7 @@ class ScreenStreamService : Service() {
         } else serviceAction(ACTION_RECORD, 21)
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_monitor)
-            .setContentTitle("MyMonitor 017")
+            .setContentTitle("MyMonitor 018")
             .setContentText(text)
             .setContentIntent(intentForActivity())
             .setOngoing(true)
@@ -272,7 +272,7 @@ class ScreenStreamService : Service() {
             height = size.second
             reader = createReader(width, height)
             val density = resources.displayMetrics.densityDpi
-            display = captured.createVirtualDisplay("MyMonitor017", width, height, density,
+            display = captured.createVirtualDisplay("MyMonitor018", width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, frameHandler)
             projectionActive = true
             StreamHub.projectionReady = true

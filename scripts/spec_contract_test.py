@@ -76,3 +76,17 @@ assert "onTaskRemoved(" in service
 assert "onTrimMemory(" in service
 assert 'versionCode 17' in file("app/build.gradle")
 print("V017 POWER + ORIENTATION CONTRACT PASS: permission, service, lifecycle, geometry, version")
+
+# v018: the UVC image-size decision belongs to the parent viewport exactly once.
+# OPENGL cached the old EGL viewport after screen rotation; NORMAL attaches
+# UVCCamera directly to TextureView's surface and follows new measured bounds.
+preview_geometry = file("app/src/main/java/com/karinlab/mymonitor/PreviewGeometry.kt")
+assert ".setRenderMode(CameraRequest.RenderMode.NORMAL)" in fragment
+assert ".setAspectRatioShow(false)" in fragment
+assert "preview.setAspectRatio(" not in fragment
+assert "camera?.setRenderSize(" not in fragment
+assert "PreviewGeometry.centered(" in fragment
+assert "fun centered(" in preview_geometry
+assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
+assert "versionCode 18" in file("app/build.gradle")
+print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
