@@ -88,7 +88,7 @@ assert "camera?.setRenderSize(" not in fragment
 assert "PreviewGeometry.centered(" in fragment
 assert "fun centered(" in preview_geometry
 assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
-assert "versionCode 18" in file("app/build.gradle")
+assert "versionCode 19" in file("app/build.gradle")
 print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
 
 # v019 audio lifecycle and Windows binary provenance.
