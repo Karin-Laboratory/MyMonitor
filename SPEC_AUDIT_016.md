@@ -10,7 +10,7 @@ One Android APK, no user-visible input-mode switch:
 - No UVC input -> stream Android-native screen and eligible playback audio, with Android's mandatory current-session screen-sharing consent.
 - Unplug UVC -> immediately favor a still-valid Android screen capture; if permission is no longer valid, guide a new consent request, and bring the native Android home back rather than leaving a disconnected UVC preview covering the screen.
 - Windows EXE starts and is automatically found. Once paired, reliably reconnect even if UDP broadcasts are blocked.
-- User can independently record locally/SMB; stopping a live stream must not stop a local screen recording.
+- User can independently record locally/SMB; stopping a live stream must not stop a local screen recording. Notification EXIT must stop the foreground UVC Activity as well as the streaming service.
 - Persistent notification exposes recording, stop/resume stream, and exit.
 - Preserve the v015 low-latency transport, high-res scaling, rotation adaptation and saved settings.
 
@@ -30,6 +30,7 @@ One Android APK, no user-visible input-mode switch:
 | Multiple receivers and selection | Streaming receiver can refuse further proof connections while the single TCP receiver is busy | Picker preserves already verified active connection and scans for additional discovered hosts |
 | Recording with "送信停止" | ScreenStreamService.processImage returned immediately when StreamHub.enabled=false, starving ScreenRecorder | Recording source is independent; image processing continues for an active local recorder while stream is off |
 | Stop / resume notification | Only "送信停止" existed, and notification controls/status could become stale | Stop and resume are distinct actions, controls refreshed on source/record/connection state changes |
+| Notification "終了" | Stopped the background service but left a live UVC Activity running | The service broadcasts an app-scoped finish command, requests recording finalization, then finishes the Activity |
 | Screen recorder -> UVC recorder | A new USB camera may appear while screen recorder is active | Finalize current screen MP4, start a separate UVC MP4 once UVC is opened (best-effort) |
 | UVC recorder -> screen recorder | Unplug while recording would abruptly close capture, losing logical continuity | Attempt UVC MP4 finalization and request/restore native screen capture; resume to a new screen MP4 if capture continues (best-effort; physical unplug may prevent finishing old file) |
 | Screen rotation and orientation | Activity recreation could close the UVC TextureView and briefly disconnect | Handle orientation/screenSize configuration changes without re-creating Activity; update UVC preview surface size while preserving MediaProjection VirtualDisplay resize and receiver scaling |

@@ -287,6 +287,15 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         }, output.absolutePath)
     }
 
+    fun requestStopRecording() {
+        if (recording && !stopping) {
+            stopping = true
+            try { camera?.captureVideoStop() } catch (e: Exception) {
+                status("録画終了処理に失敗: ${e.message}")
+            }
+        }
+    }
+
     fun toggleRecording() {
         val c = camera
         if (recording) {

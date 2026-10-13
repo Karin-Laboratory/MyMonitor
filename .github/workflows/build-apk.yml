@@ -28,7 +28,6 @@ jobs:
           if [ ! -f .signing/debug.keystore ]; then
             keytool -genkeypair -keystore .signing/debug.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
           fi
-          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.16 --jq '.object.sha')" = "${GITHUB_SHA}"
       - name: Fetch pinned upstream UVC and apply MJPEG tap
         run: |
           mkdir -p vendor
@@ -121,4 +120,4 @@ jobs:
           else
             gh release create v0.16 mymonitor016.apk mycastreceiver016.exe TRANSFER.md SPEC_AUDIT_016.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 016 + Low-latency Windows Receiver' --notes 'Source/lifecycle repair: unplug UVC returns to Android screen or requests consent, known Windows IP verified directly before UDP fallback, notification start/stop/record state, independent screen recording. v015 low-latency JPEG/ACK/GDI pipeline retained. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
           fi
-          test "$(gh api \"repos/${GH_REPO}/git/ref/tags/v0.16\" --jq '.object.sha')" = "${GITHUB_SHA}"
+          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.16 --jq '.object.sha')" = "${GITHUB_SHA}"

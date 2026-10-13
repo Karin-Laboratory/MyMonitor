@@ -38,6 +38,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var video: FrameLayout
     private var cameraMounted = false
     private var receiverRegistered = false
+    private var exitReceiverRegistered = false
+    private val exitReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ScreenStreamService.ACTION_FINISH_UI) {
+                if (::monitor.isInitialized) monitor.requestStopRecording()
+                messageHandler.postDelayed({ if (!isFinishing) finish() }, 450)
+            }
+        }
+    }
     private var requestingProjection = false
     private var audioPermissionAsked = false
     private var pendingUvcRecord = false
@@ -121,6 +130,10 @@ class MainActivity : AppCompatActivity() {
         val filter = IntentFilter().apply { addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED); addAction(UsbManager.ACTION_USB_DEVICE_DETACHED) }
         ContextCompat.registerReceiver(this, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         receiverRegistered = true
+        ContextCompat.registerReceiver(this, exitReceiver,
+            IntentFilter(ScreenStreamService.ACTION_FINISH_UI),
+            ContextCompat.RECEIVER_NOT_EXPORTED)
+        exitReceiverRegistered = true
         requestCameraForUvc()
         scanUsbDevices()
         ContextCompat.startForegroundService(this,
@@ -299,8 +312,12 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (::monitor.isInitialized && ::video.isInitialized && !hasUvcDevice())
             onUvcGone()
-        else if (::monitor.isInitialized && cameraMounted && hasUvcDevice())
-            messageHandler.postDelayed({ monitor.refreshUsb() }, 250)
+        else if (::monitor.isInitialized && hasUvcDevice()) {
+            // Android may suppress background USB auto-launch. When the user
+            // returns to MyMonitor, enumerate the already-connected device.
+            requestCameraForUvc()
+            if (cameraMounted) messageHandler.postDelayed({ monitor.refreshUsb() }, 250)
+        }
     }
 
     private fun mountCamera() {
@@ -350,6 +367,7 @@ class MainActivity : AppCompatActivity() {
         usbReturnTask?.let { messageHandler.removeCallbacks(it) }
         expireMessage?.let { messageHandler.removeCallbacks(it) }
         if (receiverRegistered) { unregisterReceiver(usbReceiver); receiverRegistered = false }
+        if (exitReceiverRegistered) { unregisterReceiver(exitReceiver); exitReceiverRegistered = false }
         StreamHub.statusSink = null
         super.onDestroy()
     }

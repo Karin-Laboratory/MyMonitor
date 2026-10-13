@@ -35,6 +35,8 @@ expected={
     "audio follows screen source": (hub, "CapturePolicy.Source.SCREEN"),
     "notification start/resume": (service, "ACTION_RESUME_STREAM"),
     "notification stop": (service, "ACTION_STOP_STREAM"),
+    "service EXIT finishes UVC Activity": (service, "ACTION_FINISH_UI"),
+    "Activity listens for EXiT": (activity, "exitReceiverRegistered"),
     "screen recording independent": (service, 'Recording must continue after "送信停止"'),
     "active record state": (service, "screenRecording = true"),
     "local UVC recording": (fragment, "captureVideoStart("),

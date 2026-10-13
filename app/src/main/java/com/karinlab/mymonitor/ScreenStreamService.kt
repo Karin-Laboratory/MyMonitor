@@ -32,6 +32,7 @@ class ScreenStreamService : Service() {
         const val ACTION_SOURCE_CHANGED = "com.karinlab.mymonitor.SOURCE_CHANGED"
         const val ACTION_STOP_SCREEN_RECORD = "com.karinlab.mymonitor.STOP_SCREEN_RECORD"
         const val ACTION_EXIT = "com.karinlab.mymonitor.EXIT"
+        const val ACTION_FINISH_UI = "com.karinlab.mymonitor.FINISH_UI"
         @Volatile var screenRecording = false
             private set
         @Volatile var projectionActive = false
@@ -176,7 +177,13 @@ class ScreenStreamService : Service() {
             ACTION_STOP_SCREEN_RECORD -> {
                 if (recorder != null) stopScreenRecord()
             }
-            ACTION_EXIT -> { stopSelf(); return START_NOT_STICKY }
+            ACTION_EXIT -> {
+                // Stop both the projection service and any foreground UVC
+                // Activity. Merely stopSelf() left the UVC app open in v015.
+                sendBroadcast(Intent(ACTION_FINISH_UI).setPackage(packageName))
+                stopSelf()
+                return START_NOT_STICKY
+            }
             else -> Unit
         }
         return START_STICKY

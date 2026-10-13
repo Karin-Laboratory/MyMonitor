@@ -29,7 +29,7 @@ Use the Windows Private network firewall profile to allow UDP 57008 (discovery),
 | Notification "送信停止" | Stops video/audio transport but does NOT stop an active local screen MP4 recording |
 | Notification "送信再開" | Rechecks remembered Windows IPv4 / broadcast and resumes the existing capture source |
 | Notification "● 録画" / "録画停止" | Controls current source's MP4 recording |
-| Notification "終了" | Stops service, projection and network; attempts MP4 finalization |
+| Notification "終了" | Stops service, projection and network; notifies foreground UVC Activity to close after best-effort MP4 finalization |
 
 ## Receiver auto-connection
 
