@@ -41,6 +41,7 @@ object StreamHub {
     @Volatile private var initialized = false
     private var activeHost: String? = null
     private var activePort = 0
+    private var lastSubnetSweepMs = -100_000L
 
     @Synchronized fun init(context: Context) {
         if (initialized) return
@@ -120,12 +121,16 @@ object StreamHub {
             if (!enabled) return 0
             // The single-thread Windows receiver cannot accept an identity
             // probe while the existing MJPEG connection is open.
-            if (selectedHost != null && sender.isRunning()) return 1
+            if (selectedHost != null && sender.hasTransportConnection()) return 1
             val prefs = app.getSharedPreferences("monitor", Context.MODE_PRIVATE)
             val saved = prefs.getString("windowsHost", null)
             val savedPort = prefs.getInt("windowsPort", 57007)
+            val now = android.os.SystemClock.elapsedRealtime()
+            val allowSubnet = now - lastSubnetSweepMs >= 90_000L
+            if (allowSubnet) lastSubnetSweepMs = now
             val choices = withDiscoveryWifiLock {
-                ReceiverDiscovery.scan(saved, savedPort)
+                ReceiverDiscovery.scan(saved, savedPort,
+                    allowSubnetFallback = allowSubnet)
             }
             val target = CapturePolicy.choose(choices, saved) { it.host }
             if (target != null) {
@@ -155,7 +160,7 @@ object StreamHub {
         }
         return withDiscoveryWifiLock {
             ReceiverDiscovery.scanAll(prefs.getString("windowsHost", null),
-                prefs.getInt("windowsPort", 57007))
+                prefs.getInt("windowsPort", 57007), allowSubnetFallback = true)
         }
     }
 

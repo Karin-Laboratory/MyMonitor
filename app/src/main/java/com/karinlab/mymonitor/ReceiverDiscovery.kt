@@ -11,6 +11,9 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import java.security.SecureRandom
 import java.util.Collections
+import java.util.concurrent.ExecutorCompletionService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Receiver discovery is NOT allowed to trust an IP address or a UDP string.
@@ -58,18 +61,20 @@ object ReceiverDiscovery {
      * for deterministic JVM tests with an in-process fake receiver.
      */
     fun scan(preferredHost: String? = null, preferredPort: Int = VIDEO_PORT,
-             includeBroadcast: Boolean = true): List<Receiver> {
+             includeBroadcast: Boolean = true,
+             allowSubnetFallback: Boolean = false): List<Receiver> {
         val found = linkedMapOf<String, Receiver>()
         remembered(preferredHost, preferredPort)?.let { found[it.host + ":" + it.port] = it }
         if (!includeBroadcast) return found.values.toList()
         // A successful remembered receiver should be immediately usable.
         // The explicit receiver picker can still call scanAll() to enumerate.
         if (found.isNotEmpty()) return found.values.toList()
-        return scanAll()
+        return scanAll(allowSubnetFallback = allowSubnetFallback)
     }
 
     fun scanAll(preferredHost: String? = null,
-                preferredPort: Int = VIDEO_PORT): List<Receiver> {
+                preferredPort: Int = VIDEO_PORT,
+                allowSubnetFallback: Boolean = false): List<Receiver> {
         val candidates = linkedMapOf<String, Receiver>()
         remembered(preferredHost, preferredPort)?.let { candidates[it.host + ":" + it.port] = it }
         val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
@@ -130,10 +135,80 @@ object ReceiverDiscovery {
         } catch (_: Exception) { }
         // Validate candidate identity directly. Bounced/proxied UDP packets do
         // not confer trust in a DHCP/router address.
-        return candidates.values.filter {
+        val verified = candidates.values.filter {
             // The remembered address was already probed earlier.
             (it.name == "前回のWindows" && it.host == preferredHost && it.port == preferredPort) ||
                 probe(it.host, it.port)
-        }.sortedWith(compareBy(Receiver::name, Receiver::host))
+        }.toMutableList()
+        if (verified.isEmpty() && allowSubnetFallback)
+            verified.addAll(sweepLocal24())
+        return verified.distinctBy { it.host to it.port }
+            .sortedWith(compareBy(Receiver::name, Receiver::host))
+    }
+
+    /**
+     * Final fallback when BOTH saved TCP IP and UDP discovery failed.
+     * Only PRIVATE IPv4 addresses on the local physical LAN (not public or
+     * point-to-point/VPN); at most one /24 block (254 hosts), TCP57007 ONLY,
+     * <= ~3.5 seconds, <=24 short connections in flight. Disabled on normal
+     * refreshes and throttled by StreamHub so it is never a continuous scanner.
+     */
+    internal fun local24Peers(address: Inet4Address): List<String> {
+        if (!address.isSiteLocalAddress || address.isLoopbackAddress ||
+            address.isLinkLocalAddress) return emptyList()
+        val bytes = address.address.map { it.toInt() and 255 }
+        val prefix = "${bytes[0]}.${bytes[1]}.${bytes[2]}."
+        return (1..254).map { prefix + it }.filter { it != address.hostAddress }
+    }
+
+    private fun fastProbe(host: String): Boolean {
+        return try {
+            Socket().use { s ->
+                s.soTimeout = 260
+                s.tcpNoDelay = true
+                s.connect(InetSocketAddress(host, VIDEO_PORT), 180)
+                s.getOutputStream().write("MCP1".toByteArray(Charsets.US_ASCII))
+                val proof = ByteArray(4)
+                DataInputStream(s.getInputStream()).readFully(proof)
+                proof.contentEquals("MCR1".toByteArray(Charsets.US_ASCII))
+            }
+        } catch (_: Exception) { false }
+    }
+
+    private fun sweepLocal24(): List<Receiver> {
+        val peers = try {
+            val all = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
+            val networks = Collections.list(all)
+                .filter { it.isUp && !it.isLoopback && !it.isPointToPoint }
+                // Prefer the physical Wi-Fi subnet over virtual bridge interfaces.
+                .sortedBy { if (it.name.startsWith("wlan") || it.name.startsWith("wifi")) 0 else 1 }
+            networks.asSequence().flatMap { network ->
+                Collections.list(network.inetAddresses).asSequence()
+                    .filterIsInstance<Inet4Address>()
+            }.map { local24Peers(it) }.firstOrNull { it.isNotEmpty() } ?: emptyList()
+        } catch (_: Exception) { emptyList() }
+        if (peers.isEmpty()) return emptyList()
+
+        val pool = Executors.newFixedThreadPool(24) { job ->
+            Thread(job, "MyMonitorPrivateLanDiscovery").apply { isDaemon = true }
+        }
+        val completion = ExecutorCompletionService<String?>(pool)
+        return try {
+            for (peer in peers) completion.submit(java.util.concurrent.Callable {
+                if (fastProbe(peer)) peer else null
+            })
+            val found = mutableListOf<Receiver>()
+            var remaining = peers.size
+            val deadline = System.nanoTime() + 3_500_000_000L
+            while (remaining > 0 && System.nanoTime() < deadline && found.size < 8) {
+                val nanos = deadline - System.nanoTime()
+                val next = completion.poll(nanos, TimeUnit.NANOSECONDS) ?: break
+                remaining--
+                try {
+                    next.get()?.let { found.add(Receiver(it, VIDEO_PORT, "LAN内のWindows")) }
+                } catch (_: Exception) { }
+            }
+            found
+        } finally { pool.shutdownNow() }
     }
 }

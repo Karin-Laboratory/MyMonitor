@@ -3,6 +3,8 @@ package com.karinlab.mymonitor
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
+import java.net.InetAddress
+import java.net.Inet4Address
 import java.net.SocketTimeoutException
 import kotlin.concurrent.thread
 
@@ -55,4 +57,15 @@ class ReceiverDiscoveryTest {
                 includeBroadcast = false).isEmpty())
         }
     }
+    @Test fun localSubnetFallbackIsBoundedToPrivateLan() {
+        val privateAddress = InetAddress.getByName("192.168.0.100") as Inet4Address
+        val hosts = ReceiverDiscovery.local24Peers(privateAddress)
+        assertEquals(253, hosts.size)
+        assertTrue(hosts.contains("192.168.0.27"))
+        assertFalse(hosts.contains("192.168.0.100"))
+        assertFalse(hosts.contains("192.168.1.1"))
+        val publicAddress = InetAddress.getByName("8.8.8.8") as Inet4Address
+        assertTrue(ReceiverDiscovery.local24Peers(publicAddress).isEmpty())
+    }
+
 }

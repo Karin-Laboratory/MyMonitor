@@ -179,9 +179,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun beginScreenConsent() {
-        // A physical USB capture takes priority even before its preview is open.
-        if (requestingProjection || ScreenStreamService.projectionActive ||
-            hasUvcDevice() || StreamHub.uvcReady) return
+        // Explicit user consent may also be granted while a UVC device is
+        // present; UVC keeps priority, and projection is ready for its removal.
+        // Automatic call sites suppress the dialog during USB opening.
+        if (requestingProjection || ScreenStreamService.projectionActive) return
         if (!audioPermissionAsked &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             audioPermissionAsked = true

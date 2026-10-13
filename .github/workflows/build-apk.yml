@@ -28,6 +28,7 @@ jobs:
           if [ ! -f .signing/debug.keystore ]; then
             keytool -genkeypair -keystore .signing/debug.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
           fi
+          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.16 --jq '.object.sha')" = "${GITHUB_SHA}"
       - name: Fetch pinned upstream UVC and apply MJPEG tap
         run: |
           mkdir -p vendor
@@ -113,6 +114,11 @@ jobs:
           sha256sum -c SHA256SUMS.txt
           if gh release view v0.16 >/dev/null 2>&1; then
             gh release upload v0.16 mymonitor016.apk mycastreceiver016.exe TRANSFER.md SPEC_AUDIT_016.md SHA256SUMS.txt --clobber
+            # A same-version v016 correction must have release/tag AND binary
+            # assets point at the same tested commit, not an earlier attempt.
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.16" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+            gh release edit v0.16 --target "${GITHUB_SHA}"
           else
             gh release create v0.16 mymonitor016.apk mycastreceiver016.exe TRANSFER.md SPEC_AUDIT_016.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'My Monitor 016 + Low-latency Windows Receiver' --notes 'Source/lifecycle repair: unplug UVC returns to Android screen or requests consent, known Windows IP verified directly before UDP fallback, notification start/stop/record state, independent screen recording. v015 low-latency JPEG/ACK/GDI pipeline retained. Matching monitor icon embedded. Windows receiver smoke-tested. Pixel/Wi-Fi end-to-end latency needs device measurement. Update BOTH APK and EXE.'
           fi
+          test "$(gh api \"repos/${GH_REPO}/git/ref/tags/v0.16\" --jq '.object.sha')" = "${GITHUB_SHA}"

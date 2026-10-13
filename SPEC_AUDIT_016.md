@@ -32,7 +32,7 @@ One Android APK, no user-visible input-mode switch:
 | Stop / resume notification | Only "送信停止" existed, and notification controls/status could become stale | Stop and resume are distinct actions, controls refreshed on source/record/connection state changes |
 | Screen recorder -> UVC recorder | A new USB camera may appear while screen recorder is active | Finalize current screen MP4, start a separate UVC MP4 once UVC is opened (best-effort) |
 | UVC recorder -> screen recorder | Unplug while recording would abruptly close capture, losing logical continuity | Attempt UVC MP4 finalization and request/restore native screen capture; resume to a new screen MP4 if capture continues (best-effort; physical unplug may prevent finishing old file) |
-| Screen rotation and orientation | MediaProjection uses VirtualDisplay resize and receiver scales preserving aspect | Retained unchanged; no new mode or decoder pipeline |
+| Screen rotation and orientation | Activity recreation could close the UVC TextureView and briefly disconnect | Handle orientation/screenSize configuration changes without re-creating Activity; update UVC preview surface size while preserving MediaProjection VirtualDisplay resize and receiver scaling |
 | Capture-to-Windows latency | v015 low-latency ACK + asynchronous JPEG decoder + GDI BitBlt already successful in user's real-world keyboard test | Unchanged except v016 file label. Protocol, frame queue and drawing behavior preserved |
 | Android audio / Windows playback | AudioPlaybackCapture PCM TCP57009 (eligible applications only) | Retained |
 | SMB export | Both recorders finalize locally then Storage exports asynchronously; export failures retain local originals | Retained; do not add network I/O to low-latency sender |
@@ -53,7 +53,7 @@ One Android APK, no user-visible input-mode switch:
 
 ## Verified by v016 CI, independent of hardware
 
-- Unit tests: CapturePolicy source priorities, USB removal and consent transitions, receiver selection with 0/1/2 candidates; ReceiverDiscovery valid TCP proof, bogus DHCP response rejection, and saved receiver discovery without UDP.
+- Unit tests: CapturePolicy source priorities, USB removal and consent transitions, receiver selection with 0/1/2 candidates; ReceiverDiscovery valid TCP proof, bogus DHCP response rejection, saved receiver discovery without UDP, and bounded private-/24 peer enumeration.
 - Source-level specification contract guard for USB callbacks, source arbitration, recorder independence, notification commands and v015 low-latency receiver paths.
 - Build Android UVC native code and APK, compile static Windows EXE.
 - Exercise real Windows EXE with Full HD JPEG, quick ACK burst, corrupted frames, V2 UDP + TCP receiver proof, audio TCP, heartbeat, reconnect, and 2-minute soak.

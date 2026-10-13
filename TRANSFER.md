@@ -37,11 +37,11 @@ V016 ALWAYS tries the last successfully validated IPv4 + TCP port by connecting 
 
 This directly addresses the user's home LAN, where manual IPv4 entry succeeded but broadcasts did not. The phone can reconnect to that same Windows PC without relying on UDP broadcasts after it has been paired once.
 
-If remembered Windows has moved to a different IP, phone falls back to nonce-protected UDP V2 discovery: two sends, all per-interface broadcast addresses + 255.255.255.255, temporary Android multicast lock, and 2.2s receive window. Every UDP response must still pass the direct TCP proof.
+If remembered Windows has moved to a different IP, phone falls back to nonce-protected UDP V2 discovery: two sends, all per-interface broadcast addresses + 255.255.255.255, temporary Android multicast lock, and 2.2s receive window. Every UDP response must still pass the direct TCP proof. If both direct saved-IP verification and UDP fail, a **rate-limited, private-LAN-only /24 TCP check** probes at most 254 addresses on the dedicated receiver port, with a 3.5-second deadline and at most 24 concurrent probes. This runs at most once per 90 seconds in background discovery and never during an established connection.
 
 The picker shows all verified receivers plus an active already-verified receiver, even though TCP identity probing cannot run concurrently with a running one-client video connection.
 
-**Limit:** First-time discovery can still fail if a router/SSID/VLAN or firewall filters broadcast; type the actual Windows PC IPv4 one time in "Windowsへ転送". Save occurs only after actual receiver reply.
+**Limit:** First-time discovery can still fail across a different subnet/VLAN or with a blocked receiver port; type the actual Windows PC IPv4 one time in "Windowsへ転送". Save occurs only after actual receiver reply.
 
 ## Recording
 

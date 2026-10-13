@@ -32,6 +32,7 @@ class WindowsSender(private val report: (String) -> Unit) {
     @Volatile private var socket: Socket? = null
     @Volatile private var awaitingAckSince = 0L
     @Volatile private var connected = false
+    @Volatile private var transportConnected = false
 
     fun isRunning() = running.get()
     /** Clear a UVC JPEG queued before the screen source became active, or vice versa. */
@@ -42,6 +43,8 @@ class WindowsSender(private val report: (String) -> Unit) {
     }
     /** True only after the remote receiver ACKed an actual video frame. */
     fun isConnected() = connected
+    /** TCP socket is actually established even when UVC has not sent first frame. */
+    fun hasTransportConnection() = transportConnected
     fun awaitStopped(timeoutMs: Long = 2500) {
         val thread = worker
         if (thread != null && thread !== Thread.currentThread())
@@ -86,6 +89,7 @@ class WindowsSender(private val report: (String) -> Unit) {
         lastMjpeg = 0L
         lastOffered = 0L
         connected = false
+        transportConnected = false
         frames.clear()
         worker = Thread({
             var failures = 0
@@ -99,6 +103,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                         // This applies to ACK reads, not socket writes.
                         s.soTimeout = 5000
                         s.connect(InetSocketAddress(host, port), 3000)
+                        transportConnected = true
                         s.tcpNoDelay = true
                         s.keepAlive = true
                         connected = true
@@ -206,6 +211,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                         }
                     } finally {
                         connected = false
+                        transportConnected = false
                         awaitingAckSince = 0L
                         try { s.close() } catch (_: Exception) {}
                         if (socket === s) socket = null
@@ -224,6 +230,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                 }
             } finally {
                 connected = false
+                transportConnected = false
                 running.set(false)
                 socket = null
                 frames.clear()
@@ -234,6 +241,7 @@ class WindowsSender(private val report: (String) -> Unit) {
     /** A deliberate stop must never be undone by the automatic reconnect. */
     fun stop() {
         connected = false
+        transportConnected = false
         running.set(false)
         try { socket?.close() } catch (_: Exception) {}
         worker?.interrupt()
