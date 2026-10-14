@@ -18,7 +18,7 @@ class RemoteControlService : AccessibilityService() {
         fun receive(packet: ByteArray) {
             val service = instance ?: return
             if (packet.size != 9 || !StreamHub.enabled || StreamHub.source() != CapturePolicy.Source.SCREEN ||
-                !StreamHub.sender.hasTransportConnection() || !ScreenStreamService.projectionActive) return
+                !StreamHub.controlArmed || !StreamHub.sender.hasTransportConnection() || !ScreenStreamService.projectionActive) return
             val keyguard = service.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             if (keyguard.isKeyguardLocked) return
             val op = packet[0].toInt() and 255
@@ -27,7 +27,7 @@ class RemoteControlService : AccessibilityService() {
             val x1 = word(1); val y1 = word(3); val x2 = word(5); val y2 = word(7)
             if (listOf(x1,y1,x2,y2).any { it > 65535 }) return
             main.post {
-                if (instance !== service || !StreamHub.enabled ||
+                if (instance !== service || !StreamHub.enabled || !StreamHub.controlArmed ||
                     StreamHub.source() != CapturePolicy.Source.SCREEN || !ScreenStreamService.projectionActive ||
                     keyguard.isKeyguardLocked) return@post
                 val metrics = service.resources.displayMetrics
