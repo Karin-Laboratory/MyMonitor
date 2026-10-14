@@ -42,6 +42,17 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private var currentDeviceId: Int? = null
     private var waitingForPermission = false
     private var opening = false
+    private var closing = false
+    private var retryGeneration = 0
+    private val retryHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private fun physicalPresent(device: UsbDevice): Boolean =
+        (context?.getSystemService(Context.USB_SERVICE) as? UsbManager)?.deviceList?.values?.any {
+            it.deviceId == device.deviceId && it.vendorId == device.vendorId && it.productId == device.productId
+        } == true
+    private fun scheduleRecheck(delay: Long = 650L) {
+        val generation = ++retryGeneration
+        retryHandler.postDelayed({ if (generation == retryGeneration && isAdded && viewReady && !closing) refreshUsb() }, delay)
+    }
     private var ready = false
     private var recording = false
     private var stopping = false
@@ -126,10 +137,13 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         host()?.runOnUiThread {
                             if (device != null && isUvc(device) &&
                                 (currentDeviceId == null || currentDeviceId == device.deviceId)) {
-                                val wasRecording = recording
-                                closeCamera()
-                                host()?.onUvcGone(wasRecording)
-                                status("USB切断")
+                                if (physicalPresent(device)) {
+                                    status("USB切断通知（機器は接続中）。プレビューを保持")
+                                    scheduleRecheck()
+                                } else {
+                                    status("USB切断（物理切断）")
+                                    usbDetached()
+                                }
                             }
                         }
                     }
@@ -137,8 +151,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         host()?.runOnUiThread {
                             if (device != null && isUvc(device) &&
                                 (currentDeviceId == null || currentDeviceId == device.deviceId)) {
-                                usbDetached()
-                                status("USB機器を取り外しました")
+                                if (!physicalPresent(device)) {
+                                    usbDetached()
+                                    status("USB機器を取り外しました")
+                                } else scheduleRecheck()
                             }
                         }
                     }
@@ -193,7 +209,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             else status("UVCなし。スマホ画面入力を利用できます")
             return
         }
-        if (camera != null || opening || waitingForPermission) return
+        if (camera != null || opening || closing || waitingForPermission) return
         val device = devices.first()
         waitingForPermission = true
         status("UVC検出 VID:%04X PID:%04X / USBアクセス許可を要求中".format(device.vendorId, device.productId))
@@ -211,7 +227,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     private fun openCamera(device: UsbDevice, control: USBMonitor.UsbControlBlock) {
         if (!viewReady || !isAdded) return
-        if (opening || camera != null) return
+        if (opening || closing || camera != null || !physicalPresent(device)) return
         opening = true
         currentDeviceId = device.deviceId
         status("USB許可取得、UVCオープン中")
@@ -272,7 +288,11 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     status("UVC映像 ${width}×${height}" + if (width == 1920 && height == 1080) " / Full HD" else " / 機器が選択した解像度")
                 }
                 ICameraStateCallBack.State.CLOSED -> { opening = false; camera = null; ready = false; StreamHub.setUvcReady(false); status("UVCクローズ") }
-                ICameraStateCallBack.State.ERROR -> { status("UVCエラー: ${msg ?: "unknown"}"); closeCamera() }
+                ICameraStateCallBack.State.ERROR -> {
+                    status("UVCエラー: ${msg ?: "unknown"}")
+                    closeCamera()
+                    scheduleRecheck(1200L)
+                }
             }
         }
     }
@@ -288,6 +308,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     /** Physical unplug path. Different from onStop, which only pauses preview. */
     fun usbDetached() {
+        ++retryGeneration
         val wasRecording = recording
         closeCamera()
         waitingForPermission = false
@@ -303,16 +324,25 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 status("USB切断中の録画終了に失敗: ${e.message}")
             }
         }
+        if (closing) return
+        closing = true
         opening = false
         StreamHub.setUvcReady(false)
         ready = false
         recording = false
         stopping = false
         host()?.setRecording(false)
-        camera?.setCameraStateCallBack(null)
-        camera?.setMjpegDataCallback(null)
-        camera?.closeCamera()
+        val old = camera
         camera = null
+        try {
+            old?.setCameraStateCallBack(null)
+            old?.setMjpegDataCallback(null)
+            old?.closeCamera()
+        } catch (e: Exception) {
+            Log.w("MyMonitor-UVC", "UVC cleanup failed", e)
+        } finally {
+            closing = false
+        }
         currentDeviceId = null
         if (::placeholder.isInitialized) placeholder.visibility = View.VISIBLE
     }
