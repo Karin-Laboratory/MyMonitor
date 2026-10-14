@@ -59,21 +59,30 @@ class MainActivity : AppCompatActivity() {
     private var screenConsentDeclined = false
     private var notificationPermissionRequested = false
     private var usbReturnTask: Runnable? = null
+    // Only MonitorFragment owns USBMonitor and CameraUVC. Activity coalesces
+    // Android broadcasts into a single physical-enumeration reconciliation.
+    private var usbReconcileTask: Runnable? = null
+    private fun reconcilePhysicalUsb() {
+        usbReconcileTask?.let { messageHandler.removeCallbacks(it) }
+        val task = Runnable {
+            if (isFinishing || isDestroyed || !::monitor.isInitialized) return@Runnable
+            scanUsbDevices()
+            if (hasUvcDevice()) {
+                screenConsentDeclined = false
+                requestCameraForUvc()
+                if (cameraMounted) monitor.refreshUsb()
+            } else {
+                if (cameraMounted) monitor.usbDetached()
+                onUvcGone()
+            }
+        }
+        usbReconcileTask = task
+        messageHandler.postDelayed(task, 450)
+    }
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED || intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
-                video.postDelayed({
-                    scanUsbDevices()
-                    if (hasUvcDevice()) {
-                        screenConsentDeclined = false
-                        requestCameraForUvc()
-                        if (cameraMounted) monitor.refreshUsb()
-                    } else {
-                        if (cameraMounted) monitor.usbDetached()
-                        onUvcGone()
-                    }
-                }, 350)
-            }
+            if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED ||
+                intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) reconcilePhysicalUsb()
         }
     }
     private lateinit var state: TextView
@@ -290,15 +299,8 @@ class MainActivity : AppCompatActivity() {
                 pendingUvcRecord = true
                 onUvcReady()
             }
-            UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                messageHandler.postDelayed({ requestCameraForUvc(); if (cameraMounted) monitor.refreshUsb() }, 500)
-            }
-            UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                messageHandler.postDelayed({
-                    if (cameraMounted) monitor.usbDetached()
-                    onUvcGone()
-                }, 400)
-            }
+            UsbManager.ACTION_USB_DEVICE_ATTACHED, UsbManager.ACTION_USB_DEVICE_DETACHED ->
+                reconcilePhysicalUsb()
         }
     }
 
@@ -431,6 +433,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        usbReconcileTask?.let { messageHandler.removeCallbacks(it) }
         usbReturnTask?.let { messageHandler.removeCallbacks(it) }
         expireMessage?.let { messageHandler.removeCallbacks(it) }
         if (receiverRegistered) { unregisterReceiver(usbReceiver); receiverRegistered = false }
