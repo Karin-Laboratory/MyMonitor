@@ -17,7 +17,7 @@ class RemoteControlService : AccessibilityService() {
         private val main = Handler(Looper.getMainLooper())
         fun receive(packet: ByteArray) {
             val service = instance ?: return
-            if (packet.size != 9 || !StreamHub.enabled || StreamHub.source() != CapturePolicy.Source.SCREEN ||
+            if (packet.size != 17 || !StreamHub.enabled || StreamHub.source() != CapturePolicy.Source.SCREEN ||
                 !StreamHub.controlArmed || !StreamHub.sender.hasTransportConnection() || !ScreenStreamService.projectionActive) return
             val keyguard = service.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             if (keyguard.isKeyguardLocked) return
@@ -25,6 +25,7 @@ class RemoteControlService : AccessibilityService() {
             if (op !in 1..5) return
             fun word(i: Int) = ((packet[i].toInt() and 255) shl 8) or (packet[i+1].toInt() and 255)
             val x1 = word(1); val y1 = word(3); val x2 = word(5); val y2 = word(7)
+            val x3 = word(9); val y3 = word(11); val x4 = word(13); val y4 = word(15)
             if (listOf(x1,y1,x2,y2).any { it > 65535 }) return
             main.post {
                 if (instance !== service || !StreamHub.enabled || !StreamHub.controlArmed ||
@@ -43,7 +44,7 @@ class RemoteControlService : AccessibilityService() {
                     2 -> stroke(x1,y1,x1,y1,700)
                     3 -> stroke(x1,y1,x2,y2,350)
                     4 -> { stroke(x1,y1,x2,y2,400)
-                           stroke(65535-x1,65535-y1,65535-x2,65535-y2,400) }
+                           stroke(x3,y3,x4,y4,400) }
                     5 -> { service.performGlobalAction(GLOBAL_ACTION_BACK); return@post }
                 }
                 service.dispatchGesture(builder.build(),null,null)
