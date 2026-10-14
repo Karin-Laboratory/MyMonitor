@@ -1,18 +1,16 @@
-# MyMonitor v0.23 RC candidate / MyCastReceiver v0.23
+# MyMonitor / MyCastReceiver v0.25 experimental remote control
 
-Use [v023 release](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.23) for the APK and native Windows EXE. The existing package ID and debug-signing key are retained to allow in-place installation. Keep [v022](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.22) as a rollback.
+Download Android APK `mymonitor025.apk` and Windows EXE `mycastreceiver025.exe` together from https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.25 . The Android package and signing key are unchanged; it supports an in-place update from v024.
 
-## Changes
-v023 makes MonitorFragment the sole USBMonitor/CameraUVC owner, coalesces Activity USB events, rejects callbacks from destroyed USB monitor generations, and adds a permission-result watchdog. A pure recovery policy controls event validity, disconnect behavior and bounded retry intervals; JUnit exercises those rules.
+1. Install APK and run v025 EXE on trusted Windows Private LAN.
+2. On the Android app, tap **遠隔操作**. If not enabled, it opens Android's Accessibility settings. Enable the **MyMonitor remote control** accessibility service manually.
+3. Return to MyMonitor, start native phone screen sharing with explicit MediaProjection consent, ensure Windows receiver is connected.
+4. Tap **遠隔操作** again to arm this session. In the Windows EXE press **Alt+R** to enable input.
+5. Click, press-and-release, drag-and-release, wheel, right click (Android Back), Ctrl+wheel (pinch), or touch the Windows screen. The current implementation dispatches gestures on release, with approximate durations.
+6. Press Alt+R to stop Windows input. Android automatically disarms on USB UVC source change, projection loss, or video connection loss. Turn off the Accessibility service from Android Settings to revoke permission entirely.
 
-## Validation
-GitHub CI runs Android native and unit tests, Windows MSVC build, low-latency MJPEG/ACK, discovery, audio reconnect, 2-minute soak and optional Defender scan. It **does not** test real Pixel 10a USB replug or background behavior. See [RC_AUDIT_023.md](RC_AUDIT_023.md) for the acceptance checklist.
+Ports: video TCP57007, audio TCP57009 and discovery UDP57008. v025 uses MMC5: an extra 17-byte control instruction after each 1-byte video ACK on the **same existing video connection**, no additional listener. v024 Windows does not understand MMC5, so upgrade both ends.
 
-## Installation
-Install `mymonitor023.apk` over v022. Close the earlier Windows receiver, then run `mycastreceiver023.exe`. The executable is **unsigned**, so retain Windows Defender protection; do not bypass a detection. LAN traffic uses TCP 57007 (video), UDP 57008 (discovery), and TCP 57009 (audio) on trusted private networks only. MediaProjection screen capture requires Android consent after token invalidation.
+This is not cryptographically paired to a specific Windows device. Trusted LAN only, no internet port exposure. Android targetSdk still 28; Win EXE unsigned. See SPEC_FIX_025.md for limitations.
 
-## Diagnostics
-Use wireless ADB and capture `MyMonitor-UVC`, `MyMonitor-Preview` and `AndroidRuntime`. v023 logs connection generation, device ID, permission state and camera state. Real-device reconnect errors should be correlated using those fields.
-
-## Compatibility note
-Android target SDK is still 28; this is a legacy-API compatibility choice, not proof of compliance with current store publishing requirements or every modern Android power-management policy.
+Existing UVC and audio code is preserved; physical Windows multitouch, Pixel 10a gesture injection and ten-cycle UVC hotplug require hardware checks before RC promotion.
