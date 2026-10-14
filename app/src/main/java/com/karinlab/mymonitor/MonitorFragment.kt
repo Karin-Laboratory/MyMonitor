@@ -140,11 +140,11 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             usbMonitor = USBMonitor.getInstance(requireContext()).also { monitor ->
                 monitor.setOnDeviceConnectListener(object : USBMonitor.OnDeviceConnectListener {
                     override fun onAttach(device: UsbDevice?) {
-                        host()?.runOnUiThread { if (epoch == monitorEpoch && device != null && isUvc(device)) { trace("ATTACH", device); status("USB装着: VID %04X PID %04X".format(device.vendorId, device.productId)); refreshUsb() } }
+                        host()?.runOnUiThread { if (UsbRecoveryPolicy.acceptEvent(epoch, monitorEpoch) && device != null && isUvc(device)) { trace("ATTACH", device); status("USB装着: VID %04X PID %04X".format(device.vendorId, device.productId)); refreshUsb() } }
                     }
                     override fun onConnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?, createNew: Boolean) {
                         host()?.runOnUiThread {
-                            if (epoch != monitorEpoch) return@runOnUiThread
+                            if (!UsbRecoveryPolicy.acceptEvent(epoch, monitorEpoch)) return@runOnUiThread
                             trace("CONNECT new=$createNew", device)
                             if (device != null && ctrlBlock != null && isUvc(device) && !opening && !closing && camera == null) {
                                 waitingForPermission = false
@@ -154,11 +154,11 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     }
                     override fun onDisconnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
                         host()?.runOnUiThread {
-                            if (epoch != monitorEpoch) return@runOnUiThread
+                            if (!UsbRecoveryPolicy.acceptEvent(epoch, monitorEpoch)) return@runOnUiThread
                             trace("DISCONNECT", device)
                             if (device != null && isUvc(device) &&
                                 (currentDeviceId == null || currentDeviceId == device.deviceId)) {
-                                if (physicalPresent(device)) {
+                                if (!UsbRecoveryPolicy.shouldCloseOnDisconnect(physicalPresent(device))) {
                                     status("USB切断通知（機器は接続中）。プレビューを保持")
                                     if (camera == null) scheduleRecheck()
                                 } else {
@@ -181,7 +181,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     }
                     override fun onCancel(device: UsbDevice?) {
                         host()?.runOnUiThread {
-                            if (epoch != monitorEpoch) return@runOnUiThread
+                            if (!UsbRecoveryPolicy.acceptEvent(epoch, monitorEpoch)) return@runOnUiThread
                             waitingForPermission = false
                             trace("PERMISSION_CANCEL", device)
                             status("USB機器へのアクセスが許可されませんでした。USB確認から再試行")
@@ -256,7 +256,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 monitor.requestPermission(device)
                 val epoch = monitorEpoch
                 retryHandler.postDelayed({
-                    if (epoch == monitorEpoch && waitingForPermission &&
+                    if (UsbRecoveryPolicy.acceptEvent(epoch, monitorEpoch) && waitingForPermission &&
                         android.os.SystemClock.uptimeMillis() >= permissionDeadline) {
                         waitingForPermission = false
                         trace("PERMISSION_TIMEOUT", device)
@@ -352,7 +352,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     }
                     usbMonitor = null
                     waitingForPermission = false
-                    val delay = when (nativeFailures) { 1 -> 1500L; 2 -> 3500L; else -> 9000L }
+                    val delay = UsbRecoveryPolicy.retryDelayMs(nativeFailures)
                     retryBlockedUntil = android.os.SystemClock.uptimeMillis() + delay
                     status("UVC native再接続失敗 ${nativeFailures}回。USB監視を再初期化 (${delay}ms)")
                     val generation = ++retryGeneration
