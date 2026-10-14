@@ -48,6 +48,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private var retryBlockedUntil = 0L
     private var retryGeneration = 0
     private var monitorEpoch = 0
+    private var lastEnumeratedDeviceId: Int? = null
+    private var resettingMonitor = false
     private var permissionDeadline = 0L
     private val permissionTimeoutMs = 4000L
     private fun trace(event: String, device: UsbDevice? = null) {
@@ -129,7 +131,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     }
 
     private fun ensureUsbMonitor() {
-        if (!isAdded || !viewReady) return
+        if (!isAdded || !viewReady || resettingMonitor) return
         if (usbMonitor != null) {
             // Keep the same listener through a background/foreground round trip.
             refreshUsb()
@@ -170,6 +172,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     }
                     override fun onDetach(device: UsbDevice?) {
                         host()?.runOnUiThread {
+                            if (!UsbRecoveryPolicy.acceptEvent(epoch, monitorEpoch)) return@runOnUiThread
+                            trace("DETACH", device)
                             if (device != null && isUvc(device) &&
                                 (currentDeviceId == null || currentDeviceId == device.deviceId)) {
                                 if (!physicalPresent(device)) {
@@ -231,18 +235,27 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         val manager = requireContext().getSystemService(Context.USB_SERVICE) as UsbManager
         val devices = manager.deviceList.values.filter(::isUvc)
         if (devices.isEmpty()) {
-            if (camera != null || ready) usbDetached()
+            if (camera != null || ready || lastEnumeratedDeviceId != null) usbDetached()
             else status("UVCなし。スマホ画面入力を利用できます")
             return
         }
-        if (camera != null || opening || closing) return
+        val device = devices.first()
+        if (lastEnumeratedDeviceId != null && lastEnumeratedDeviceId != device.deviceId) {
+            trace("DEVICE_ID_CHANGED", device)
+            usbDetached()
+        }
+        lastEnumeratedDeviceId = device.deviceId
+        if (usbMonitor == null && !resettingMonitor) {
+            ensureUsbMonitor()
+            return
+        }
+        if (camera != null || opening || closing || resettingMonitor) return
         if (waitingForPermission) {
             if (android.os.SystemClock.uptimeMillis() < permissionDeadline) return
             waitingForPermission = false
             trace("PERMISSION_TIMEOUT")
         }
         if (android.os.SystemClock.uptimeMillis() < retryBlockedUntil) return
-        val device = devices.first()
         waitingForPermission = true
         permissionDeadline = android.os.SystemClock.uptimeMillis() + permissionTimeoutMs
         status("UVC検出 VID:%04X PID:%04X / USBアクセス許可を要求中".format(device.vendorId, device.productId))
@@ -345,13 +358,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     lastFailedDeviceId = failedDeviceId
                     nativeFailures++
                     // Invalidate posted callbacks before releasing the old control block.
-                    ++monitorEpoch
-                    trace("RESET_MONITOR")
-                    try { usbMonitor?.unregister(); usbMonitor?.destroy() } catch (e: Exception) {
-                        Log.w("MyMonitor-UVC", "USB monitor reset", e)
-                    }
-                    usbMonitor = null
-                    waitingForPermission = false
+                    resetUsbMonitor("NATIVE_ERROR")
                     val delay = UsbRecoveryPolicy.retryDelayMs(nativeFailures)
                     retryBlockedUntil = android.os.SystemClock.uptimeMillis() + delay
                     status("UVC native再接続失敗 ${nativeFailures}回。USB監視を再初期化 (${delay}ms)")
@@ -375,6 +382,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     /** Physical unplug path. Different from onStop, which only pauses preview. */
     fun usbDetached() {
+        val hadDevice = lastEnumeratedDeviceId != null || camera != null || opening || ready
+        lastEnumeratedDeviceId = null
         ++retryGeneration
         nativeFailures = 0
         retryBlockedUntil = 0L
@@ -383,6 +392,29 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         closeCamera()
         waitingForPermission = false
         host()?.onUvcGone(wasRecording)
+        if (hadDevice) resetUsbMonitor("PHYSICAL_DETACH")
+    }
+
+    /** Dispose USBMonitor and any cached UsbControlBlock on each real unplug.
+     * Old callbacks are invalidated before release. The next physical attach
+     * starts a fresh monitor, rather than reusing an alternating stale handle.
+     */
+    private fun resetUsbMonitor(reason: String) {
+        if (resettingMonitor) return
+        resettingMonitor = true
+        ++monitorEpoch
+        waitingForPermission = false
+        trace("RESET_MONITOR:$reason")
+        val old = usbMonitor
+        usbMonitor = null
+        try {
+            old?.unregister()
+            old?.destroy()
+        } catch (e: Exception) {
+            Log.w("MyMonitor-UVC", "USB monitor reset failed: $reason", e)
+        } finally {
+            resettingMonitor = false
+        }
     }
 
     private fun closeCamera() {
@@ -427,13 +459,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     override fun onDestroyView() {
         // Real view destruction is different from transient Activity onStop.
-        ++monitorEpoch
         ++retryGeneration
         closeCamera()
+        resetUsbMonitor("VIEW_DESTROY")
         waitingForPermission = false
-        usbMonitor?.unregister()
-        usbMonitor?.destroy()
-        usbMonitor = null
         super.onDestroyView()
     }
 
