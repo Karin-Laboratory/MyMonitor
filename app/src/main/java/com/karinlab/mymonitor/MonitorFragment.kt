@@ -41,6 +41,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private var camera: CameraUVC? = null
     private var currentDeviceId: Int? = null
     private var waitingForPermission = false
+    private var opening = false
     private var ready = false
     private var recording = false
     private var stopping = false
@@ -115,8 +116,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     }
                     override fun onConnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?, createNew: Boolean) {
                         host()?.runOnUiThread {
-                            waitingForPermission = false
-                            if (device != null && ctrlBlock != null && isUvc(device)) openCamera(device, ctrlBlock)
+                            if (device != null && ctrlBlock != null && isUvc(device) && !opening && camera == null) {
+                                waitingForPermission = false
+                                openCamera(device, ctrlBlock)
+                            }
                         }
                     }
                     override fun onDisconnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
@@ -190,7 +193,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             else status("UVCなし。スマホ画面入力を利用できます")
             return
         }
-        if (camera != null || waitingForPermission) return
+        if (camera != null || opening || waitingForPermission) return
         val device = devices.first()
         waitingForPermission = true
         status("UVC検出 VID:%04X PID:%04X / USBアクセス許可を要求中".format(device.vendorId, device.productId))
@@ -208,7 +211,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     private fun openCamera(device: UsbDevice, control: USBMonitor.UsbControlBlock) {
         if (!viewReady || !isAdded) return
-        closeCamera()
+        if (opening || camera != null) return
+        opening = true
         currentDeviceId = device.deviceId
         status("USB許可取得、UVCオープン中")
         try {
@@ -247,6 +251,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             if (self !== camera) return@runOnUiThread
             when (code) {
                 ICameraStateCallBack.State.OPENED -> {
+                    opening = false
                     ready = true
                     StreamHub.setUvcReady(true)
                     host()?.onUvcReady()
@@ -266,8 +271,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     }
                     status("UVC映像 ${width}×${height}" + if (width == 1920 && height == 1080) " / Full HD" else " / 機器が選択した解像度")
                 }
-                ICameraStateCallBack.State.CLOSED -> { ready = false; StreamHub.setUvcReady(false); status("UVCクローズ") }
-                ICameraStateCallBack.State.ERROR -> { ready = false; StreamHub.setUvcReady(false); status("UVCエラー: ${msg ?: "unknown"}") }
+                ICameraStateCallBack.State.CLOSED -> { opening = false; camera = null; ready = false; StreamHub.setUvcReady(false); status("UVCクローズ") }
+                ICameraStateCallBack.State.ERROR -> { status("UVCエラー: ${msg ?: "unknown"}"); closeCamera() }
             }
         }
     }
@@ -298,6 +303,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 status("USB切断中の録画終了に失敗: ${e.message}")
             }
         }
+        opening = false
         StreamHub.setUvcReady(false)
         ready = false
         recording = false
