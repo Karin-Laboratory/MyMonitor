@@ -2,15 +2,15 @@
 
 One Android app for **USB UVC HDMI capture + native Android screen/audio streaming** and a standalone Windows x64 MJPEG receiver. The input switches automatically: a successfully opened USB UVC camera takes priority; unplugging returns to the Android screen (after OS permission when required).
 
-## Current release: v0.25 (experimental remote screen control)
+## Current release: v0.26 (remote control Y calibration and mouse side buttons)
 
-- [Android APK / Windows EXE release](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.25)
-- [v025 control specification and security notes](SPEC_FIX_025.md)
+- [Android APK / Windows EXE release](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.26)
+- [v026 control specification and security notes](SPEC_FIX_026.md)
 - [Installation and operations](TRANSFER.md)
 
-v025 adds an **opt-in remote screen-control channel** to the existing Android-to-Windows MJPEG/ACK transport. It controls the **Android screen only**, never the external UVC source. Enable MyMonitor in Android Accessibility Settings, start screen capture, arm the app's 遠隔操作 toggle, then press **Alt+R** in MyCastReceiver. Both toggles default disabled or are cleared on source/transport changes.
+v026 adds an **opt-in remote screen-control channel** to the existing Android-to-Windows MJPEG/ACK transport. It controls the **Android screen only**, never the external UVC source. Enable MyMonitor in Android Accessibility Settings, start screen capture, arm the app's 遠隔操作 toggle, then press **Alt+R** in MyCastReceiver. Both toggles default disabled or are cleared on source/transport changes.
 
-Mouse click: tap; hold/release: long press; drag/release: swipe; wheel: scroll; Ctrl+wheel: symmetric pinch; right click: Back. Windows touch pointer gestures are converted to strokes, including paired two-finger start/end paths. Motion is applied on release, not streamed continuously. Both components must be v025 for MMC5 reverse-control packets.
+Mouse click: tap; hold/release: long press; drag/release: swipe; wheel: scroll; Ctrl+wheel: symmetric pinch; right click: Back. Windows touch pointer gestures are converted to strokes, including paired two-finger start/end paths. Motion is applied on release, not streamed continuously. Both components must be v026 for MMC5 reverse-control packets.
 
 **Security:** Android accessibility permission can drive the entire screen. Only use a private LAN and explicitly arm control per session. Peer cryptographic pairing is not implemented. Physical gesture and touch screen validation remains pending.
 
