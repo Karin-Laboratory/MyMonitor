@@ -85,7 +85,7 @@ class ScreenStreamService : Service() {
             try {
                 val power = getSystemService(Context.POWER_SERVICE) as PowerManager
                 val lock = screenWakeLock ?: power.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK, "MyMonitor019:ActiveCapture").apply {
+                    PowerManager.PARTIAL_WAKE_LOCK, "MyMonitor020:ActiveCapture").apply {
                     setReferenceCounted(false)
                     screenWakeLock = this
                 }
@@ -326,7 +326,18 @@ class ScreenStreamService : Service() {
         }
     }
 
+    private var lastSizeCheckMs = 0L
+
     private fun processImage(source: ImageReader) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastSizeCheckMs > 500L) {
+            lastSizeCheckMs = now
+            val expected = screenSize()
+            if (expected.first != width || expected.second != height) {
+                android.util.Log.i("MyMonitor-Preview", "Screen rotation capture ${width}x${height} -> ${expected.first}x${expected.second}")
+                frameHandler?.post { resizeCapture(expected.first, expected.second) }
+            }
+        }
         val image = try { source.acquireLatestImage() } catch (_: Exception) { null } ?: return
         try {
             // Recording must continue after "送信停止" or when no Windows PC
