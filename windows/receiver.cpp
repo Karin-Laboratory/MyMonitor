@@ -63,12 +63,12 @@ static std::mutex lockSocket;
 static std::thread worker;
 static std::atomic<bool> remoteControlEnabled{false};
 static std::mutex controlMutex;
-static std::vector<std::array<unsigned char,9>> controlQueue;
+static std::vector<std::array<unsigned char,17>> controlQueue;
 static POINT dragStart{};
 static POINT dragLast{};
 static ULONGLONG dragStarted = 0;
 static bool mouseDragging = false;
-static bool touchPointerActive = false;
+static ULONGLONG lastTouchMs = 0;
 static std::map<UINT32,POINT> touchStart, touchEnd;
 static bool normalized(HWND hwnd, POINT pt, uint16_t &nx, uint16_t &ny) {
     RECT client{}; GetClientRect(hwnd,&client);
@@ -83,20 +83,25 @@ static bool normalized(HWND hwnd, POINT pt, uint16_t &nx, uint16_t &ny) {
     ny=uint16_t((std::min)(65535.0,(std::max)(0.0,(pt.y-top)*65535.0/h)));
     return true;
 }
-static void enqueueControl(HWND hwnd, int op, POINT from, POINT to) {
+static void enqueueControl(HWND hwnd, int op, POINT from, POINT to, POINT secondFrom = {}, POINT secondTo = {}) {
     if (!remoteControlEnabled.load() || !linkConnected.load()) return;
     uint16_t x1,y1,x2,y2;
     if (!normalized(hwnd,from,x1,y1) || !normalized(hwnd,to,x2,y2)) return;
-    std::array<unsigned char,9> data{};
+    std::array<unsigned char,17> data{};
     data[0]=static_cast<unsigned char>(op);
     auto put=[&](int i,uint16_t v){data[i]=static_cast<unsigned char>(v>>8);data[i+1]=static_cast<unsigned char>(v & 255);};
     put(1,x1);put(3,y1);put(5,x2);put(7,y2);
+    if (op == 4) {
+        uint16_t xa,ya,xb,yb;
+        if (!normalized(hwnd,secondFrom,xa,ya) || !normalized(hwnd,secondTo,xb,yb)) return;
+        put(9,xa);put(11,ya);put(13,xb);put(15,yb);
+    }
     std::lock_guard<std::mutex> lock(controlMutex);
     if (controlQueue.size() >= 64) controlQueue.erase(controlQueue.begin());
     controlQueue.push_back(data);
 }
 static bool sendControlAck(SOCKET s, bool enhanced) {
-    char ack[10] = {6};
+    char ack[18] = {6};
     if (enhanced) {
         std::lock_guard<std::mutex> guard(controlMutex);
         if (remoteControlEnabled.load() && !controlQueue.empty()) {
@@ -105,7 +110,7 @@ static bool sendControlAck(SOCKET s, bool enhanced) {
             std::memcpy(ack+1,packet.data(),packet.size());
         }
     }
-    int sent=0, count=enhanced?10:1;
+    int sent=0, count=enhanced?18:1;
     while (sent<count) {int n=send(s,ack+sent,count-sent,0);if(n<=0)return false;sent+=n;}
     return true;
 }
@@ -367,7 +372,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         }
         break;
     case WM_LBUTTONDOWN:
-        if (remoteControlEnabled.load()) {
+        if (remoteControlEnabled.load() && GetTickCount64()-lastTouchMs > 700) {
             dragStart={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
             dragLast=dragStart;
             dragStarted=GetTickCount64();
@@ -379,7 +384,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         if (mouseDragging) dragLast={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
         return 0;
     case WM_LBUTTONUP:
-        if (mouseDragging) {
+        if (mouseDragging && GetTickCount64()-lastTouchMs > 700) {
             dragLast={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
             const ULONGLONG elapsed=GetTickCount64()-dragStarted;
             const int dist=abs(dragLast.x-dragStart.x)+abs(dragLast.y-dragStart.y);
@@ -389,7 +394,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         return 0;
     case WM_RBUTTONUP: {
         POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
-        enqueueControl(hwnd,5,point,point);
+        if (GetTickCount64()-lastTouchMs > 700) enqueueControl(hwnd,5,point,point);
         return 0;
     }
     case WM_MOUSEWHEEL: {
@@ -399,7 +404,10 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         const int delta=GET_WHEEL_DELTA_WPARAM(w);
         if (GetKeyState(VK_CONTROL)&0x8000) {
             end.y += delta>0?-60:60;
-            enqueueControl(hwnd,4,point,end);
+            POINT a=point,b=point,c=point,d=point;
+            a.x-=55; b.x-=delta>0?85:30;
+            c.x+=55; d.x+=delta>0?85:30;
+            enqueueControl(hwnd,4,a,b,c,d);
         } else {
             end.y+=delta>0?120:-120;
             enqueueControl(hwnd,3,point,end);
@@ -412,6 +420,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         const UINT32 id=GET_POINTERID_WPARAM(w);
         POINTER_INFO info{};
         if (GetPointerInfo(id,&info) && info.pointerType == PT_TOUCH) {
+            lastTouchMs=GetTickCount64();
             POINT pt=info.ptPixelLocation;
             ScreenToClient(hwnd,&pt);
             if (message==WM_POINTERDOWN) {
@@ -421,7 +430,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                 if (message==WM_POINTERUP) {
                     if (touchStart.size()>=2) {
                         auto it=touchStart.begin(); auto it2=std::next(it);
-                        enqueueControl(hwnd,4,it->second,touchEnd[it->first]);
+                        enqueueControl(hwnd,4,it->second,touchEnd[it->first],it2->second,touchEnd[it2->first]);
                         touchStart.clear(); touchEnd.clear();
                     } else {
                         POINT start=touchStart[id], finish=touchEnd[id];
