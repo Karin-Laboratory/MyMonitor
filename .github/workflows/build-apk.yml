@@ -33,7 +33,7 @@ jobs:
         run: |
           mkdir -p vendor
           git clone --depth 1 --branch 3.6.0 https://github.com/ernestp/AndroidUSBCamera.git vendor/AndroidUSBCamera
-          test "$(git -C vendor/AndroidUSBCamera rev-parse HEAD)" = "09df386a46e6aef22e4a021105246b2c9805ed05"
+          test "$(git -C vendor/AndroidUSBCamera rev-parse HEAD)" = "09df386a46e6aef22e4a020105246b2c9805ed05"
           python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
       - name: Build Android UVC/native and APK with unit tests
         run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
