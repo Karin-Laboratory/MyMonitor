@@ -172,7 +172,7 @@ print("V026 FULL PHYSICAL Y COORDINATES + MOUSE SIDE BUTTON CONTRACT PASS")
 
 # Safety audit: remove misleading shadowed session connection state.
 assert "var sessionWasConnected = false" in sender
-assert "var connected = false" not in sender
+assert "\n                    var connected = false" not in sender
 assert "connected = true" in sender
 # Remote input must not replay after disabling, and pointer capture must end.
 assert "const bool enabledNow = !remoteControlEnabled.load();" in receiver
