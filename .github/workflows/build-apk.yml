@@ -153,7 +153,7 @@ jobs:
             mymonitor023.apk
             mycastreceiver023.exe
             TRANSFER.md
-            SPEC_FIX_023.md
+            RC_AUDIT_023.md
             SHA256SUMS.txt
 
   publish:
@@ -170,10 +170,10 @@ jobs:
         run: |
           sha256sum -c SHA256SUMS.txt
           if gh release view v0.23 >/dev/null 2>&1; then
-            gh release upload v0.23 mymonitor023.apk mycastreceiver023.exe TRANSFER.md SPEC_FIX_023.md SHA256SUMS.txt --clobber
+            gh release upload v0.23 mymonitor023.apk mycastreceiver023.exe TRANSFER.md RC_AUDIT_023.md SHA256SUMS.txt --clobber
             gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.23" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
             gh release edit v0.23 --target "${GITHUB_SHA}"
           else
-            gh release create v0.23 mymonitor023.apk mycastreceiver023.exe TRANSFER.md SPEC_FIX_023.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 023 + Native Windows Receiver' --notes 'RC candidate: debounced USB event processing, epoch-gated stale listener callbacks, permission watchdog, unit-tested hotplug retry policy, preserved low-latency/audio/rotation. Physical Pixel 10a hotplug acceptance is still required. Windows EXE is unsigned.'
+            gh release create v0.23 mymonitor023.apk mycastreceiver023.exe TRANSFER.md RC_AUDIT_023.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 023 + Native Windows Receiver' --notes 'RC candidate: debounced USB event processing, epoch-gated stale listener callbacks, permission watchdog, unit-tested hotplug retry policy, preserved low-latency/audio/rotation. Physical Pixel 10a hotplug acceptance is still required. Windows EXE is unsigned.'
           fi
           test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.23 --jq '.object.sha')" = "${GITHUB_SHA}"
