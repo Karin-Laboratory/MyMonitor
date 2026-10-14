@@ -62,6 +62,16 @@ class ScreenStreamService : Service() {
     private var recorder: ScreenRecorder? = null
     private var width = 0
     private var height = 0
+    private val physicalDisplayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == android.view.Display.DEFAULT_DISPLAY) {
+                frameHandler?.post { reconcileCaptureGeometry("physical display changed") }
+            }
+        }
+    }
+    private var physicalDisplayListenerRegistered = false
     private val alive = java.util.concurrent.atomic.AtomicBoolean(true)
     private val main = Handler(Looper.getMainLooper())
     private var lastNotification = ""
@@ -281,7 +291,8 @@ class ScreenStreamService : Service() {
             captured.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() { main.post { closeProjection() } }
                 override fun onCapturedContentResize(w: Int, h: Int) {
-                    frameHandler?.post { resizeCapture(w, h) }
+                    // A captured app's bounds need not match the physical display.
+                    frameHandler?.post { reconcileCaptureGeometry("content callback") }
                 }
             }, frameHandler)
             val size = screenSize()
@@ -292,6 +303,9 @@ class ScreenStreamService : Service() {
             display = captured.createVirtualDisplay("MyMonitor019", width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, frameHandler)
             projectionActive = true
+            (getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+                .registerDisplayListener(physicalDisplayListener, frameHandler)
+            physicalDisplayListenerRegistered = true
             StreamHub.projectionReady = true
             refreshPowerLock()
             notifyState("画面共有を開始。Windows受信機へ自動接続")
@@ -307,9 +321,19 @@ class ScreenStreamService : Service() {
             setOnImageAvailableListener({ source -> processImage(source) }, frameHandler)
         }
 
+    private fun reconcileCaptureGeometry(reason: String) {
+        if (!projectionActive) return
+        val expected = screenSize()
+        if (expected.first != width || expected.second != height) {
+            android.util.Log.i("MyMonitor-Preview",
+                "Screen capture geometry ${width}x${height} -> ${expected.first}x${expected.second}: $reason")
+            resizeCapture(expected.first, expected.second)
+        }
+    }
+
     private fun resizeCapture(w: Int, h: Int) {
         if (!projectionActive || w <= 0 || h <= 0) return
-        val size = optimal(w, h)
+        val size = screenSize()
         if (size.first == width && size.second == height) return
         val old = reader
         width = size.first; height = size.second
@@ -329,14 +353,11 @@ class ScreenStreamService : Service() {
     private var lastSizeCheckMs = 0L
 
     private fun processImage(source: ImageReader) {
+        if (source !== reader) return
         val now = android.os.SystemClock.uptimeMillis()
         if (now - lastSizeCheckMs > 500L) {
             lastSizeCheckMs = now
-            val expected = screenSize()
-            if (expected.first != width || expected.second != height) {
-                android.util.Log.i("MyMonitor-Preview", "Screen rotation capture ${width}x${height} -> ${expected.first}x${expected.second}")
-                frameHandler?.post { resizeCapture(expected.first, expected.second) }
-            }
+            reconcileCaptureGeometry("frame watchdog")
         }
         val image = try { source.acquireLatestImage() } catch (_: Exception) { null } ?: return
         try {
@@ -540,6 +561,11 @@ class ScreenStreamService : Service() {
     }
 
     private fun closeProjection() {
+        if (physicalDisplayListenerRegistered) {
+            (getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+                .unregisterDisplayListener(physicalDisplayListener)
+            physicalDisplayListenerRegistered = false
+        }
         projectionActive = false
         StreamHub.projectionReady = false
         refreshPowerLock()
