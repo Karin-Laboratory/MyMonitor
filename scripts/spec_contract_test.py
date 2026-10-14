@@ -121,7 +121,7 @@ print("V021 PHYSICAL USB DISCONNECT GUARD PASS")
 
 assert "ensureUsbMonitor()" in fragment
 assert "retryBlockedUntil" in fragment
-assert "usbMonitor?.destroy()" in fragment
+assert "old?.destroy()" in fragment
 print("V022 NATIVE CONTROL-BLOCK RESET AND BACKOFF CONTRACT PASS")
 
 
