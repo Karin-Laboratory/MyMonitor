@@ -458,7 +458,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         const ULONGLONG now = GetTickCount64();
         if (now - lastTitleUpdate >= 1000) {
             lastTitleUpdate = now;
-            std::wstring title = L"My Cast Receiver 027";
+            std::wstring title = L"My Cast Receiver 028";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
                 if (picture) title += L" - " + std::to_wstring(picture->width) +
@@ -639,7 +639,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                 FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, RGB(210,210,210));
-                const wchar_t* text = L"My Cast Receiver 027\nWaiting on TCP 57007\n\n"
+                const wchar_t* text = L"My Cast Receiver 028\nWaiting on TCP 57007\n\n"
                     L"Android: auto discovery or IPv4 + port 57007\n"
                     L"OBS: Window Capture -> My Cast Receiver\nFull HD / Screen + audio / UVC";
                 DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_WORDBREAK);
