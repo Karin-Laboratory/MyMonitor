@@ -1,7 +1,7 @@
 """Windows CI: live audio channel contract independent of UVC JPEG."""
 import socket, struct, subprocess, time
 from pathlib import Path
-p = subprocess.Popen([str(Path("mycastreceiver027.exe").resolve())])
+p = subprocess.Popen([str(Path("mycastreceiver028.exe").resolve())])
 try:
     time.sleep(2)
     pcm = bytes(3840)
