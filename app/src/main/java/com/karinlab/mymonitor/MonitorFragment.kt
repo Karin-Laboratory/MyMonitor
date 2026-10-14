@@ -47,6 +47,14 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private var lastFailedDeviceId: Int? = null
     private var retryBlockedUntil = 0L
     private var retryGeneration = 0
+    private var monitorEpoch = 0
+    private var permissionDeadline = 0L
+    private val permissionTimeoutMs = 4000L
+    private fun trace(event: String, device: UsbDevice? = null) {
+        Log.i("MyMonitor-UVC", "RC23 $event epoch=$monitorEpoch device=${device?.deviceId ?: currentDeviceId} " +
+            "camera=${if (ready) "READY" else if (opening) "OPENING" else if (closing) "CLOSING" else "IDLE"} " +
+            "registered=${usbMonitor?.isRegistered} permission=$waitingForPermission failures=$nativeFailures")
+    }
     private val retryHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private fun physicalPresent(device: UsbDevice): Boolean =
         (context?.getSystemService(Context.USB_SERVICE) as? UsbManager)?.deviceList?.values?.any {
@@ -121,20 +129,24 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     }
 
     private fun ensureUsbMonitor() {
+        if (!isAdded || !viewReady) return
         if (usbMonitor != null) {
             // Keep the same listener through a background/foreground round trip.
             refreshUsb()
             return
         }
         try {
+            val epoch = ++monitorEpoch
             usbMonitor = USBMonitor.getInstance(requireContext()).also { monitor ->
                 monitor.setOnDeviceConnectListener(object : USBMonitor.OnDeviceConnectListener {
                     override fun onAttach(device: UsbDevice?) {
-                        host()?.runOnUiThread { if (device != null && isUvc(device)) { status("USB装着: VID %04X PID %04X".format(device.vendorId, device.productId)); refreshUsb() } }
+                        host()?.runOnUiThread { if (epoch == monitorEpoch && device != null && isUvc(device)) { trace("ATTACH", device); status("USB装着: VID %04X PID %04X".format(device.vendorId, device.productId)); refreshUsb() } }
                     }
                     override fun onConnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?, createNew: Boolean) {
                         host()?.runOnUiThread {
-                            if (device != null && ctrlBlock != null && isUvc(device) && !opening && camera == null) {
+                            if (epoch != monitorEpoch) return@runOnUiThread
+                            trace("CONNECT new=$createNew", device)
+                            if (device != null && ctrlBlock != null && isUvc(device) && !opening && !closing && camera == null) {
                                 waitingForPermission = false
                                 openCamera(device, ctrlBlock)
                             }
@@ -142,6 +154,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     }
                     override fun onDisconnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
                         host()?.runOnUiThread {
+                            if (epoch != monitorEpoch) return@runOnUiThread
+                            trace("DISCONNECT", device)
                             if (device != null && isUvc(device) &&
                                 (currentDeviceId == null || currentDeviceId == device.deviceId)) {
                                 if (physicalPresent(device)) {
@@ -166,7 +180,12 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         }
                     }
                     override fun onCancel(device: UsbDevice?) {
-                        host()?.runOnUiThread { waitingForPermission = false; status("USB機器へのアクセスが許可されませんでした。USB確認から再試行") }
+                        host()?.runOnUiThread {
+                            if (epoch != monitorEpoch) return@runOnUiThread
+                            waitingForPermission = false
+                            trace("PERMISSION_CANCEL", device)
+                            status("USB機器へのアクセスが許可されませんでした。USB確認から再試行")
+                        }
                     }
                 })
                 monitor.register()
@@ -216,17 +235,35 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             else status("UVCなし。スマホ画面入力を利用できます")
             return
         }
-        if (camera != null || opening || closing || waitingForPermission) return
+        if (camera != null || opening || closing) return
+        if (waitingForPermission) {
+            if (android.os.SystemClock.uptimeMillis() < permissionDeadline) return
+            waitingForPermission = false
+            trace("PERMISSION_TIMEOUT")
+        }
         if (android.os.SystemClock.uptimeMillis() < retryBlockedUntil) return
         val device = devices.first()
         waitingForPermission = true
+        permissionDeadline = android.os.SystemClock.uptimeMillis() + permissionTimeoutMs
         status("UVC検出 VID:%04X PID:%04X / USBアクセス許可を要求中".format(device.vendorId, device.productId))
         try {
             val monitor = usbMonitor
             if (monitor == null || !monitor.isRegistered) {
                 waitingForPermission = false
                 status("USB監視が未登録です")
-            } else monitor.requestPermission(device)
+            } else {
+                trace("REQUEST_PERMISSION", device)
+                monitor.requestPermission(device)
+                val epoch = monitorEpoch
+                retryHandler.postDelayed({
+                    if (epoch == monitorEpoch && waitingForPermission &&
+                        android.os.SystemClock.uptimeMillis() >= permissionDeadline) {
+                        waitingForPermission = false
+                        trace("PERMISSION_TIMEOUT", device)
+                        scheduleRecheck(500L)
+                    }
+                }, permissionTimeoutMs + 50L)
+            }
         } catch (e: Exception) {
             waitingForPermission = false
             status("USB許可要求失敗: ${e.message}")
@@ -296,6 +333,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         lastFit = PreviewGeometry.Size(0, 0)
                         updateSurfaceSize()
                     }
+                    trace("OPENED")
                     status("UVC映像 ${width}×${height}" + if (width == 1920 && height == 1080) " / Full HD" else " / 機器が選択した解像度")
                 }
                 ICameraStateCallBack.State.CLOSED -> { opening = false; camera = null; ready = false; StreamHub.setUvcReady(false); status("UVCクローズ") }
@@ -306,7 +344,9 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     if (failedDeviceId != lastFailedDeviceId) nativeFailures = 0
                     lastFailedDeviceId = failedDeviceId
                     nativeFailures++
-                    // Reset stale USBMonitor control blocks before another permission request.
+                    // Invalidate posted callbacks before releasing the old control block.
+                    ++monitorEpoch
+                    trace("RESET_MONITOR")
                     try { usbMonitor?.unregister(); usbMonitor?.destroy() } catch (e: Exception) {
                         Log.w("MyMonitor-UVC", "USB monitor reset", e)
                     }
@@ -387,6 +427,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     override fun onDestroyView() {
         // Real view destruction is different from transient Activity onStop.
+        ++monitorEpoch
+        ++retryGeneration
         closeCamera()
         waitingForPermission = false
         usbMonitor?.unregister()
