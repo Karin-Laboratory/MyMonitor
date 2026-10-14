@@ -25,6 +25,9 @@
 #include <map>
 using namespace Gdiplus;
 static HWND windowHandle;
+static constexpr UINT WM_SOURCE_MODE = WM_APP + 2;
+static std::atomic<int> streamSource{0}; // 0 unknown; 1 UVC; 2 phone screen
+
 // JPEG decode is isolated from TCP. ACK means the complete bounded packet was
 // accepted, NOT that it was decoded or painted; latest-frame-wins is intentional.
 struct DecodedFrame {
@@ -284,7 +287,9 @@ static void receiveLoop() {
             sessionGeneration.fetch_add(1);
             continue;
         }
-        const bool enhanced = readOk && std::memcmp(magic, "MMC5", 4) == 0;
+        const bool sourceAware = readOk && std::memcmp(magic, "MMC6", 4) == 0;
+        const bool enhanced = sourceAware ||
+            (readOk && std::memcmp(magic, "MMC5", 4) == 0);
         if (!readOk || (!enhanced && std::memcmp(magic, "MMC9", 4) != 0)) {
             closesocket(s);
             sessionGeneration.fetch_add(1);
@@ -299,6 +304,17 @@ static void receiveLoop() {
             uint32_t networkLength = 0;
             if (!readExact(s, reinterpret_cast<char*>(&networkLength), 4)) break;
             const uint32_t n = ntohl(networkLength);
+            if (sourceAware && n == 0xFFFFFFFFu) {
+                // Explicit source metadata, never infer UVC from JPEG dimensions.
+                unsigned char mode = 0;
+                if (!readExact(s, reinterpret_cast<char*>(&mode), 1) || mode > 2) break;
+                const int oldSource = streamSource.exchange(mode);
+                if (mode == 1 && oldSource != 1) {
+                    PostMessageW(windowHandle, WM_SOURCE_MODE, 1, static_cast<LPARAM>(generation));
+                }
+                if (!sendControlAck(s, enhanced)) break;
+                continue;
+            }
             if (n > 8 * 1024 * 1024) break;
             if (n == 0) {
                 // v014 and later keepalive. No fake image is shown.
@@ -334,8 +350,106 @@ static void receiveLoop() {
     }
 }
 
+// Borderless monitor-sized fullscreen, with exact restoration of the prior window.
+static bool isFullscreen = false;
+static WINDOWPLACEMENT windowedPlacement{};
+static LONG_PTR windowedStyle = 0;
+static LONG_PTR windowedExStyle = 0;
+static bool haveWindowedPlacement = false;
+
+static MONITORINFOEXW currentMonitorInfo(HWND hwnd) {
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof(info);
+    GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+        reinterpret_cast<MONITORINFO*>(&info));
+    return info;
+}
+
+static bool monitorIsPhysicalFhd(const MONITORINFOEXW& info) {
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    if (EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode))
+        return mode.dmPelsWidth == 1920 && mode.dmPelsHeight == 1080;
+    return info.rcMonitor.right - info.rcMonitor.left == 1920 &&
+           info.rcMonitor.bottom - info.rcMonitor.top == 1080;
+}
+
+static void enterFullscreen(HWND hwnd) {
+    if (isFullscreen) return;
+    const auto mi = currentMonitorInfo(hwnd);
+    windowedStyle = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    windowedExStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    windowedPlacement = WINDOWPLACEMENT{};
+    windowedPlacement.length = sizeof(WINDOWPLACEMENT);
+    haveWindowedPlacement = GetWindowPlacement(hwnd, &windowedPlacement) != 0;
+    SetWindowLongPtrW(hwnd, GWL_STYLE, windowedStyle & ~static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW));
+    SetWindowPos(hwnd, HWND_TOPMOST, mi.rcMonitor.left, mi.rcMonitor.top,
+        mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+        SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    isFullscreen = true;
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+static void exitFullscreen(HWND hwnd) {
+    if (!isFullscreen) return;
+    SetWindowLongPtrW(hwnd, GWL_STYLE, windowedStyle);
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, windowedExStyle);
+    const HWND z = (windowedExStyle & WS_EX_TOPMOST) ? HWND_TOPMOST : HWND_NOTOPMOST;
+    SetWindowPos(hwnd, z, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+    if (haveWindowedPlacement) SetWindowPlacement(hwnd, &windowedPlacement);
+    isFullscreen = false;
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+static void resizeForUvc(HWND hwnd) {
+    const auto info = currentMonitorInfo(hwnd);
+    // On a physical Full HD monitor, HDMI 1920x1080 is pixel-perfect fullscreen.
+    if (monitorIsPhysicalFhd(info)) {
+        enterFullscreen(hwnd);
+        return;
+    }
+    // On other monitors prefer an exact 1920x1080 client area. When the work
+    // area is smaller, fit within it to keep controls and titlebar accessible.
+    if (isFullscreen) exitFullscreen(hwnd);
+    if (IsIconic(hwnd) || IsZoomed(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+    const RECT work = currentMonitorInfo(hwnd).rcWork;
+    const int availableW = (std::max)(1L, work.right - work.left);
+    const int availableH = (std::max)(1L, work.bottom - work.top);
+    const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
+    const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
+    RECT border{0,0,0,0};
+    AdjustWindowRectEx(&border, style, GetMenu(hwnd) != nullptr, exStyle);
+    const int chromeW = border.right - border.left;
+    const int chromeH = border.bottom - border.top;
+    const double fit = (std::min)(1.0, (std::min)(
+        double((std::max)(1, availableW - chromeW)) / 1920,
+        double((std::max)(1, availableH - chromeH)) / 1080));
+    const int outerW = (std::min)(availableW, (std::max)(1, int(1920 * fit) + chromeW));
+    const int outerH = (std::min)(availableH, (std::max)(1, int(1080 * fit) + chromeH));
+    const int x = work.left + (availableW - outerW) / 2;
+    const int y = work.top + (availableH - outerH) / 2;
+    SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, outerW, outerH,
+        SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
 static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
     switch (message) {
+    case WM_SOURCE_MODE:
+        // Ignore metadata queued by an already-disconnected TCP session.
+        if (w == 1 && static_cast<std::uint64_t>(l) == sessionGeneration.load())
+            resizeForUvc(hwnd);
+        return 0;
+    case WM_KEYDOWN:
+        if (w == VK_F11) {
+            if ((static_cast<unsigned long long>(l) & (1ULL << 30)) == 0) {
+                if (isFullscreen) exitFullscreen(hwnd);
+                else enterFullscreen(hwnd);
+            }
+            return 0;
+        }
+        break;
     case WM_APP: {
         refreshPosted.store(false);
         // Frequent frames should only invalidate; modifying the window title
@@ -344,7 +458,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         const ULONGLONG now = GetTickCount64();
         if (now - lastTitleUpdate >= 1000) {
             lastTitleUpdate = now;
-            std::wstring title = L"My Cast Receiver 027";
+            std::wstring title = L"My Cast Receiver 028";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
                 if (picture) title += L" - " + std::to_wstring(picture->width) +
@@ -428,8 +542,9 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         if (GetKeyState(VK_CONTROL)&0x8000) {
             end.y += delta>0?-60:60;
             POINT a=point,b=point,c=point,d=point;
-            a.x-=55; b.x-=delta>0?85:30;
-            c.x+=55; d.x+=delta>0?85:30;
+            // Ctrl+wheel DOWN = pinch OUT; UP = pinch IN.
+            a.x-=55; b.x-=delta<0?85:30;
+            c.x+=55; d.x+=delta<0?85:30;
             enqueueControl(hwnd,4,a,b,c,d);
         } else {
             end.y+=delta>0?120:-120;
@@ -524,7 +639,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                 FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, RGB(210,210,210));
-                const wchar_t* text = L"My Cast Receiver 027\nWaiting on TCP 57007\n\n"
+                const wchar_t* text = L"My Cast Receiver 028\nWaiting on TCP 57007\n\n"
                     L"Android: auto discovery or IPv4 + port 57007\n"
                     L"OBS: Window Capture -> My Cast Receiver\nFull HD / Screen + audio / UVC";
                 DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_WORDBREAK);

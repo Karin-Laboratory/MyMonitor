@@ -74,7 +74,7 @@ assert "PowerManager.PARTIAL_WAKE_LOCK" in service
 assert "refreshPowerLock()" in service
 assert "onTaskRemoved(" in service
 assert "onTrimMemory(" in service
-assert 'versionCode 27' in file("app/build.gradle")
+assert 'versionCode 28' in file("app/build.gradle")
 print("V017 POWER/LIFECYCLE CONTRACTS RETAINED (v018 preview supersedes ratio check)")
 
 # v018: the UVC image-size decision belongs to the parent viewport exactly once.
@@ -88,7 +88,7 @@ assert "camera?.setRenderSize(" not in fragment
 assert "PreviewGeometry.centered(" in fragment
 assert "fun centered(" in preview_geometry
 assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
-assert "versionCode 27" in file("app/build.gradle")
+assert "versionCode 28" in file("app/build.gradle")
 print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
 
 # v019 audio lifecycle and Windows binary provenance.
@@ -106,7 +106,7 @@ assert 'playbackAudioAllowed' in hub
 assert "waveOutReset(device)" in file("windows/audio_receiver.h")
 assert "VERSIONINFO" in file("windows/receiver.rc")
 assert "msvc" in file(".github/workflows/build-apk.yml").lower()
-assert 'versionCode 27' in file("app/build.gradle")
+assert 'versionCode 28' in file("app/build.gradle")
 print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")
 assert "private var opening = false" in fragment
 assert "if (opening || closing || camera != null || !physicalPresent(device)) return" in fragment
@@ -140,7 +140,7 @@ assert "reconcilePhysicalUsb()" in activity and "usbReconcileTask" in activity
 assert "staleCallbacksMustNotChangeNewMonitorState" in tests
 assert "spuriousDisconnectMustNotDestroyActiveCamera" in tests
 assert "nativeFailureRetriesAreBounded" in tests
-assert "versionName '0.27'" in file("app/build.gradle")
+assert "versionName '0.28'" in file("app/build.gradle")
 assert "retryDelayMs(" in policy
 assert "MyCastReceiver.exe" not in file(".github/workflows/build-apk.yml")
 print("V023 RC USB EVENT EPOCH / TIMEOUT / RELEASE CONTRACT PASS")
@@ -179,3 +179,17 @@ assert "const bool enabledNow = !remoteControlEnabled.load();" in receiver
 assert "if (mouseDragging) {" in receiver
 assert "ReleaseCapture();" in receiver
 print("SAFETY AUDIT: rotation lifecycle, connection status, remote cancellation PASS")
+
+# v028: explicit source metadata, no JPEG-size inference; reversible F11.
+assert 'out.writeBytes("MMC6")' in sender
+assert 'out.writeInt(-1)' in sender and 'out.writeByte(source)' in sender
+assert 'std::memcmp(magic, "MMC6", 4)' in receiver
+assert 'n == 0xFFFFFFFFu' in receiver
+assert 'WM_SOURCE_MODE' in receiver and 'resizeForUvc(hwnd)' in receiver
+assert 'monitorIsPhysicalFhd(info)' in receiver
+assert 'w == VK_F11' in receiver
+assert 'enterFullscreen(hwnd)' in receiver and 'exitFullscreen(hwnd)' in receiver
+assert 'SetWindowPlacement(hwnd, &windowedPlacement)' in receiver
+assert 'b.x-=delta<0?85:30' in receiver and 'd.x+=delta<0?85:30' in receiver
+assert 'remoteControlEnabled.store(false)' in receiver
+print("V028 MODE-AWARE UVC, FULLSCREEN AND PINCH DIRECTION CONTRACT PASS")
