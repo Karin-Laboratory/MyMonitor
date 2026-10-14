@@ -107,7 +107,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                 while (running.get()) {
                     val s = Socket()
                     socket = s
-                    var connected = false
+                    var sessionWasConnected = false
                     try {
                         s.sendBufferSize = 64 * 1024
                         // This applies to ACK reads, not socket writes.
@@ -116,7 +116,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                         transportConnected = true
                         s.tcpNoDelay = true
                         s.keepAlive = true
-                        connected = true
+                        sessionWasConnected = true
                         failures = 0
                         s.use {
                             val out = DataOutputStream(s.getOutputStream())
@@ -217,7 +217,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                         if (running.get()) {
                             failures++
                             // Report every first loss, then sparingly on repeated failed attempts.
-                            if (connected || failures == 1 || failures % 10 == 0) {
+                            if (sessionWasConnected || failures == 1 || failures % 10 == 0) {
                                 report("接続が途切れました。自動再接続中: " + (e.message ?: e.javaClass.simpleName))
                             }
                         }

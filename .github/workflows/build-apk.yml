@@ -1,10 +1,10 @@
 name: Build APK and Windows Receiver
 on:
   push:
-    branches: [main]
+    branches: [main, audit-v026-safety]
   workflow_dispatch:
 concurrency:
-  group: mymonitor-publish
+  group: mymonitor-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
-      - name: Verify v026 source/lifecycle/audio/provenance contracts
+      - name: Verify v027 source/lifecycle/audio/provenance contracts
         run: python3 scripts/spec_contract_test.py
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
@@ -37,7 +37,7 @@ jobs:
           python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
       - name: Build Android UVC/native and APK with unit tests
         run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor026.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor027.apk
       - name: Create original monitor icon for native Windows build
         run: |
           sudo apt-get update && sudo apt-get install -y python3-cairosvg python3-pil
@@ -45,12 +45,12 @@ jobs:
           test -s windows/monitor.ico
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor026-android-and-icon
+          name: mymonitor027-android-and-icon
           path: |
-            mymonitor026.apk
+            mymonitor027.apk
             windows/monitor.ico
             TRANSFER.md
-            SPEC_FIX_026.md
+            SPEC_FIX_027.md
 
   windows-test:
     needs: build
@@ -59,7 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor026-android-and-icon }
+        with: { name: mymonitor027-android-and-icon }
       - name: Compile Windows EXE natively using discovered MSVC (not MinGW)
         shell: pwsh
         run: |
@@ -77,27 +77,27 @@ jobs:
             "cd windows",
             "rc /nologo /fo receiver-res.res receiver.rc",
             "if errorlevel 1 exit /b 1",
-            "cl /nologo /std:c++17 /O2 /EHsc /MT /Fe:..\mycastreceiver026.exe receiver.cpp receiver-res.res ws2_32.lib user32.lib gdi32.lib gdiplus.lib shlwapi.lib ole32.lib winmm.lib /link /SUBSYSTEM:WINDOWS /MACHINE:X64",
+            "cl /nologo /std:c++17 /O2 /EHsc /MT /Fe:..\mycastreceiver027.exe receiver.cpp receiver-res.res ws2_32.lib user32.lib gdi32.lib gdiplus.lib shlwapi.lib ole32.lib winmm.lib /link /SUBSYSTEM:WINDOWS /MACHINE:X64",
             "if errorlevel 1 exit /b 1",
             "cd .."
           )
-          Set-Content -Path build-msvc-026.cmd -Value $script -Encoding ascii
-          & cmd.exe /d /c build-msvc-026.cmd
+          Set-Content -Path build-msvc-027.cmd -Value $script -Encoding ascii
+          & cmd.exe /d /c build-msvc-027.cmd
           if ($LASTEXITCODE -ne 0) { throw "MSVC compilation or resource linking failed ($LASTEXITCODE)" }
-          if (-not (Test-Path mycastreceiver026.exe)) { throw "Missing MSVC output executable" }
+          if (-not (Test-Path mycastreceiver027.exe)) { throw "Missing MSVC output executable" }
       - name: Check Windows EXE metadata and Defender if available
         shell: pwsh
         run: |
-          $exe = (Resolve-Path ".\mycastreceiver026.exe").Path
+          $exe = (Resolve-Path ".\mycastreceiver027.exe").Path
           $info = (Get-Item $exe).VersionInfo
-          if ($info.FileVersion -ne "0.26.0.0") { throw "PE version metadata missing: $($info.FileVersion)" }
+          if ($info.FileVersion -ne "0.27.0.0") { throw "PE version metadata missing: $($info.FileVersion)" }
           $sig = Get-AuthenticodeSignature $exe
           Write-Host "Authenticode status: $($sig.Status). Signing requires a trusted certificate not available in CI."
           $defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
           if ($defender -and $defender.AMServiceEnabled -and $defender.AntivirusEnabled) {
             Start-MpScan -ScanType CustomScan -ScanPath $exe -ErrorAction Stop
             $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
-              @($_.Resources) -match [regex]::Escape("mycastreceiver026.exe")
+              @($_.Resources) -match [regex]::Escape("mycastreceiver027.exe")
             })
             if ($hits.Count -gt 0) { throw "Microsoft Defender detected the built executable: $($hits | Out-String)" }
             Write-Host "Defender scan of hosted CI executable completed with no reported detection."
@@ -144,7 +144,7 @@ jobs:
       - name: Verify published APK and MSVC EXE checksums
         shell: pwsh
         run: |
-          $files = @('mymonitor026.apk', 'mycastreceiver026.exe')
+          $files = @('mymonitor027.apk', 'mycastreceiver027.exe')
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $file"
@@ -153,32 +153,33 @@ jobs:
           foreach ($file in $files) { if (-not (Test-Path $file)) { throw "Missing $file" } }
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor026-verified
+          name: mymonitor027-verified
           path: |
-            mymonitor026.apk
-            mycastreceiver026.exe
+            mymonitor027.apk
+            mycastreceiver027.exe
             TRANSFER.md
-            SPEC_FIX_026.md
+            SPEC_FIX_027.md
             SHA256SUMS.txt
 
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: windows-test
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor026-verified }
+        with: { name: mymonitor027-verified }
       - name: Publish only fully tested APK and MSVC EXE
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.26 >/dev/null 2>&1; then
-            gh release upload v0.26 mymonitor026.apk mycastreceiver026.exe TRANSFER.md SPEC_FIX_026.md SHA256SUMS.txt --clobber
-            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.26" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
-            gh release edit v0.26 --target "${GITHUB_SHA}"
+          if gh release view v0.27 >/dev/null 2>&1; then
+            gh release upload v0.27 mymonitor027.apk mycastreceiver027.exe TRANSFER.md SPEC_FIX_027.md SHA256SUMS.txt --clobber
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.27" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+            gh release edit v0.27 --target "${GITHUB_SHA}"
           else
-            gh release create v0.26 mymonitor026.apk mycastreceiver026.exe TRANSFER.md SPEC_FIX_026.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 026 + Native Windows Receiver' --notes 'Physical-display coordinate mapping for gestures and mouse XBUTTON1 Home / XBUTTON2 Back; preserves screen-only opt-in remote control, UVC and audio. Windows EXE unsigned. Physical RC checks needed.'
+            gh release create v0.27 mymonitor027.apk mycastreceiver027.exe TRANSFER.md SPEC_FIX_027.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 027 + Native Windows Receiver' --notes 'Safety-audited v027: Home-to-landscape geometry, accurate connection status, remote-input cleanup. Existing USB recovery and video/audio protocol retained. EXE unsigned. Real device acceptance still needed.'
           fi
-          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.26 --jq '.object.sha')" = "${GITHUB_SHA}"
+          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.27 --jq '.object.sha')" = "${GITHUB_SHA}"
