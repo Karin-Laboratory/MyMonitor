@@ -134,7 +134,7 @@ assert "reconcilePhysicalUsb()" in activity and "usbReconcileTask" in activity
 assert "staleCallbacksMustNotChangeNewMonitorState" in tests
 assert "spuriousDisconnectMustNotDestroyActiveCamera" in tests
 assert "nativeFailureRetriesAreBounded" in tests
-assert "versionName '0.23'" in file("app/build.gradle")
+assert "versionName '0.24'" in file("app/build.gradle")
 assert "retryDelayMs(" in policy
 assert "MyCastReceiver.exe" not in file(".github/workflows/build-apk.yml")
 print("V023 RC USB EVENT EPOCH / TIMEOUT / RELEASE CONTRACT PASS")
