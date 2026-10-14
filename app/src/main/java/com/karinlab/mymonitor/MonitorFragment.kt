@@ -43,6 +43,9 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private var waitingForPermission = false
     private var opening = false
     private var closing = false
+    private var nativeFailures = 0
+    private var lastFailedDeviceId: Int? = null
+    private var retryBlockedUntil = 0L
     private var retryGeneration = 0
     private val retryHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private fun physicalPresent(device: UsbDevice): Boolean =
@@ -139,7 +142,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                                 (currentDeviceId == null || currentDeviceId == device.deviceId)) {
                                 if (physicalPresent(device)) {
                                     status("USB切断通知（機器は接続中）。プレビューを保持")
-                                    scheduleRecheck()
+                                    if (camera == null) scheduleRecheck()
                                 } else {
                                     status("USB切断（物理切断）")
                                     usbDetached()
@@ -210,6 +213,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             return
         }
         if (camera != null || opening || closing || waitingForPermission) return
+        if (android.os.SystemClock.uptimeMillis() < retryBlockedUntil) return
         val device = devices.first()
         waitingForPermission = true
         status("UVC検出 VID:%04X PID:%04X / USBアクセス許可を要求中".format(device.vendorId, device.productId))
@@ -259,6 +263,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         } catch (e: Exception) {
             status("UVCオープン失敗: ${e.message}")
             closeCamera()
+            scheduleRecheck(2500L)
         }
     }
 
@@ -267,6 +272,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             if (self !== camera) return@runOnUiThread
             when (code) {
                 ICameraStateCallBack.State.OPENED -> {
+                    nativeFailures = 0
+                    retryBlockedUntil = 0L
                     opening = false
                     ready = true
                     StreamHub.setUvcReady(true)
@@ -290,8 +297,24 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 ICameraStateCallBack.State.CLOSED -> { opening = false; camera = null; ready = false; StreamHub.setUvcReady(false); status("UVCクローズ") }
                 ICameraStateCallBack.State.ERROR -> {
                     status("UVCエラー: ${msg ?: "unknown"}")
+                    val failedDeviceId = currentDeviceId
                     closeCamera()
-                    scheduleRecheck(1200L)
+                    if (failedDeviceId != lastFailedDeviceId) nativeFailures = 0
+                    lastFailedDeviceId = failedDeviceId
+                    nativeFailures++
+                    // Reset stale USBMonitor control blocks before another permission request.
+                    try { usbMonitor?.unregister(); usbMonitor?.destroy() } catch (e: Exception) {
+                        Log.w("MyMonitor-UVC", "USB monitor reset", e)
+                    }
+                    usbMonitor = null
+                    waitingForPermission = false
+                    val delay = when (nativeFailures) { 1 -> 1500L; 2 -> 3500L; else -> 9000L }
+                    retryBlockedUntil = android.os.SystemClock.uptimeMillis() + delay
+                    status("UVC native再接続失敗 ${nativeFailures}回。USB監視を再初期化 (${delay}ms)")
+                    val generation = ++retryGeneration
+                    retryHandler.postDelayed({
+                        if (generation == retryGeneration && isAdded && viewReady && usbMonitor == null) onStart()
+                    }, delay)
                 }
             }
         }
@@ -309,6 +332,9 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     /** Physical unplug path. Different from onStop, which only pauses preview. */
     fun usbDetached() {
         ++retryGeneration
+        nativeFailures = 0
+        retryBlockedUntil = 0L
+        lastFailedDeviceId = null
         val wasRecording = recording
         closeCamera()
         waitingForPermission = false
