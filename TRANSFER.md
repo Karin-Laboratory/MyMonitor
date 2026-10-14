@@ -1,15 +1,18 @@
-# MyMonitor v0.19 / MyCastReceiver v0.19
+# MyMonitor v0.23 RC candidate / MyCastReceiver v0.23
 
-**Changes:** restores internal Android playback-audio capture and Windows PCM transport following phone screen lock/unlock, and builds the Windows EXE using Microsoft's native Visual C++ compiler instead of the previous static MinGW-w64 cross-compiler.
+Use [v023 release](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.23) for the APK and native Windows EXE. The existing package ID and debug-signing key are retained to allow in-place installation. Keep [v022](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.22) as a rollback.
 
-**Windows Defender caution:** the v018 detection is not confirmed to be a false positive. The v019 binary is unsigned. MSVC, embedded version information and CI antivirus check (when available) help improve provenance, but do not guarantee the file is accepted by your Windows Defender. Do not turn off Defender or add exclusions to run it. If blocked again, share the exact threat name and file SHA-256 from Windows Security > Virus & threat protection > Protection history.
+## Changes
+v023 makes MonitorFragment the sole USBMonitor/CameraUVC owner, coalesces Activity USB events, rejects callbacks from destroyed USB monitor generations, and adds a permission-result watchdog. A pure recovery policy controls event validity, disconnect behavior and bounded retry intervals; JUnit exercises those rules.
 
-**Installation:** update `mymonitor019.apk` in place to preserve your permissions/settings; close older receiver processes; run `mycastreceiver019.exe` only after it passes Windows antivirus checks. Receiver remains a single EXE, listens for verified discovery TCP57007/UDP57008, video TCP57007 and PCM audio TCP57009 on trusted private LAN.
+## Validation
+GitHub CI runs Android native and unit tests, Windows MSVC build, low-latency MJPEG/ACK, discovery, audio reconnect, 2-minute soak and optional Defender scan. It **does not** test real Pixel 10a USB replug or background behavior. See [RC_AUDIT_023.md](RC_AUDIT_023.md) for the acceptance checklist.
 
-**Audio test:** begin Android screen sharing with sound from an app that permits playback capture, lock the Pixel, then unlock it. If the original screen projection remains valid, the app recreates AudioRecord and reconnects the Windows audio socket. If the OS terminates MediaProjection, a fresh *user-approved* capture consent is required through the notification. Phone-screen audio may be silent during the locked state by Android's policy.
+## Installation
+Install `mymonitor023.apk` over v022. Close the earlier Windows receiver, then run `mycastreceiver023.exe`. The executable is **unsigned**, so retain Windows Defender protection; do not bypass a detection. LAN traffic uses TCP 57007 (video), UDP 57008 (discovery), and TCP 57009 (audio) on trusted private networks only. MediaProjection screen capture requires Android consent after token invalidation.
 
-**Display & latency:** v018 UVC rotation display and v015 low-latency JPEG/GDI sender/receiver preserved.
+## Diagnostics
+Use wireless ADB and capture `MyMonitor-UVC`, `MyMonitor-Preview` and `AndroidRuntime`. v023 logs connection generation, device ID, permission state and camera state. Real-device reconnect errors should be correlated using those fields.
 
-**Code review/CI:** `SPEC_FIX_019.md` documents diagnosis and limits; the CI suite builds APK with unit tests and MSVC x64 EXE, exercises TCP video identity, PCM session reconnect 3 times and >2-minute video reliability, publishes matching release checksums.
-
-Previous tested binaries remain at https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.18
+## Compatibility note
+Android target SDK is still 28; this is a legacy-API compatibility choice, not proof of compliance with current store publishing requirements or every modern Android power-management policy.
