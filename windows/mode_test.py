@@ -44,7 +44,7 @@ try:
         def set_mode(mode):
             sock.sendall(struct.pack("!I", 0xFFFFFFFF) + bytes([mode]))
             ack = read_all(sock, 18)
-            assert ack == b"\\x06" + bytes(17), ("Unexpected source-mode ACK", ack)
+            assert ack == bytes([6]) + bytes(17), ("Unexpected source-mode ACK", ack)
         def fullscreen():
             return (user32.GetWindowLongW(hwnd, -16) & WS_OVERLAPPEDWINDOW) == 0
         assert not fullscreen(), "Receiver must start windowed"
@@ -64,7 +64,7 @@ try:
         user32.PostMessageW(hwnd, WM_KEYUP, VK_F11, 0)
         set_mode(2)
         sock.sendall(struct.pack("!I", 0)) # still uses standard video heartbeat
-        assert read_all(sock, 18) == b"\\x06" + bytes(17)
+        assert read_all(sock, 18) == bytes([6]) + bytes(17)
         assert process.poll() is None, "Windows receiver crashed after MMC6/F11"
     print("V028 MMC6 SOURCE + F11 REVERSIBLE FULLSCREEN PASS")
 finally:
