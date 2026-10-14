@@ -14,12 +14,17 @@ import java.util.concurrent.Executors
  * Recording is independent of StreamHub.enabled and survives "送信停止".
  */
 object StreamHub {
+    @Volatile var controlArmed = false
+        private set
+    fun setControlArmed(value: Boolean) { controlArmed = value && source() == CapturePolicy.Source.SCREEN && projectionReady && enabled }
+    fun disarmControl() { controlArmed = false }
     @Volatile var uvcReady = false
         private set
     @Volatile var projectionReady = false
         set(value) {
             if (field == value) return
             field = value
+            controlArmed = false
             sender.discardPending()
             reconcileAsync()
         }
@@ -78,6 +83,7 @@ object StreamHub {
     fun setUvcReady(value: Boolean) {
         if (uvcReady == value) return
         uvcReady = value
+        controlArmed = false
         sender.discardPending()
         statusSink?.invoke(if (value) "UVC映像に自動切替" else
             if (projectionReady) "スマホ画面へ自動復帰" else "UVC切断。スマホ画面の共有許可が必要")
@@ -226,6 +232,7 @@ object StreamHub {
     }
 
     fun stopStreaming() {
+        controlArmed = false
         enabled = false
         app.getSharedPreferences("monitor", Context.MODE_PRIVATE).edit()
             .putBoolean("autoStream", false).apply()
@@ -233,6 +240,7 @@ object StreamHub {
     }
 
     fun shutdown() {
+        controlArmed = false
         selectedHost = null
         executor.execute {
             sender.stop()
