@@ -111,7 +111,13 @@ print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")
 assert "private var opening = false" in fragment
 assert "if (opening || closing || camera != null || !physicalPresent(device)) return" in fragment
 assert "supportFragmentManager.isStateSaved" in activity
-assert "Screen rotation capture" in service
+assert "reconcileCaptureGeometry(" in service
+assert "physicalDisplayListener" in service
+assert "registerDisplayListener(physicalDisplayListener, frameHandler)" in service
+assert "unregisterDisplayListener(physicalDisplayListener)" in service
+assert 'reconcileCaptureGeometry("frame watchdog")' in service
+assert "if (source !== reader) return" in service
+assert "val size = screenSize()" in service
 print("V020 UVC SERIALIZATION + SCREEN RESIZE CONTRACT PASS")
 
 assert "UsbRecoveryPolicy.shouldCloseOnDisconnect(physicalPresent(device))" in fragment
@@ -163,3 +169,13 @@ assert "GET_XBUTTON_WPARAM" in receiver
 assert "XBUTTON1 ? 6 : 7" in receiver
 assert "GLOBAL_ACTION_HOME" in remote
 print("V026 FULL PHYSICAL Y COORDINATES + MOUSE SIDE BUTTON CONTRACT PASS")
+
+# Safety audit: remove misleading shadowed session connection state.
+assert "var sessionWasConnected = false" in sender
+assert "var connected = false" not in sender
+assert "connected = true" in sender
+# Remote input must not replay after disabling, and pointer capture must end.
+assert "const bool enabledNow = !remoteControlEnabled.load();" in receiver
+assert "if (mouseDragging) {" in receiver
+assert "ReleaseCapture();" in receiver
+print("SAFETY AUDIT: rotation lifecycle, connection status, remote cancellation PASS")
