@@ -35,7 +35,7 @@ class WindowsSender(private val report: (String) -> Unit) {
     @Volatile private var transportConnected = false
 
     private fun readControl(input: java.io.InputStream) {
-        val packet = ByteArray(9)
+        val packet = ByteArray(17)
         var offset = 0
         while (offset < packet.size) {
             val n = input.read(packet,offset,packet.size-offset)
