@@ -344,7 +344,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         const ULONGLONG now = GetTickCount64();
         if (now - lastTitleUpdate >= 1000) {
             lastTitleUpdate = now;
-            std::wstring title = L"My Cast Receiver 025";
+            std::wstring title = L"My Cast Receiver 026";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
                 if (picture) title += L" - " + std::to_wstring(picture->width) +
@@ -392,6 +392,15 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             mouseDragging=false; ReleaseCapture();
         }
         return 0;
+    case WM_XBUTTONUP: {
+        const int button=GET_XBUTTON_WPARAM(w);
+        if (button == XBUTTON1 || button == XBUTTON2) {
+            POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+            enqueueControl(hwnd, button == XBUTTON1 ? 6 : 7, point, point);
+            return TRUE;
+        }
+        break;
+    }
     case WM_RBUTTONUP: {
         POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
         if (GetTickCount64()-lastTouchMs > 700) enqueueControl(hwnd,5,point,point);
