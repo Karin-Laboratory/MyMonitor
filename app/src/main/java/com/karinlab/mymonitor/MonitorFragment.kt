@@ -105,7 +105,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
                 viewReady = true
                 status("プレビュー領域準備完了")
-                refreshUsb()
+                ensureUsbMonitor()
             }
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
                 // The direct UVC SurfaceTexture follows measured sizes itself.
