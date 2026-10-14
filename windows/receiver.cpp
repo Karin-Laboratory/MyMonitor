@@ -25,6 +25,9 @@
 #include <map>
 using namespace Gdiplus;
 static HWND windowHandle;
+static constexpr UINT WM_SOURCE_MODE = WM_APP + 2;
+static std::atomic<int> streamSource{0}; // 0 unknown; 1 UVC; 2 phone screen
+
 // JPEG decode is isolated from TCP. ACK means the complete bounded packet was
 // accepted, NOT that it was decoded or painted; latest-frame-wins is intentional.
 struct DecodedFrame {
@@ -284,7 +287,9 @@ static void receiveLoop() {
             sessionGeneration.fetch_add(1);
             continue;
         }
-        const bool enhanced = readOk && std::memcmp(magic, "MMC5", 4) == 0;
+        const bool sourceAware = readOk && std::memcmp(magic, "MMC6", 4) == 0;
+        const bool enhanced = sourceAware ||
+            (readOk && std::memcmp(magic, "MMC5", 4) == 0);
         if (!readOk || (!enhanced && std::memcmp(magic, "MMC9", 4) != 0)) {
             closesocket(s);
             sessionGeneration.fetch_add(1);
@@ -299,6 +304,17 @@ static void receiveLoop() {
             uint32_t networkLength = 0;
             if (!readExact(s, reinterpret_cast<char*>(&networkLength), 4)) break;
             const uint32_t n = ntohl(networkLength);
+            if (sourceAware && n == 0xFFFFFFFFu) {
+                // Explicit source metadata, never infer UVC from JPEG dimensions.
+                unsigned char mode = 0;
+                if (!readExact(s, reinterpret_cast<char*>(&mode), 1) || mode > 2) break;
+                const int oldSource = streamSource.exchange(mode);
+                if (mode == 1 && oldSource != 1) {
+                    PostMessageW(windowHandle, WM_SOURCE_MODE, 1, static_cast<LPARAM>(generation));
+                }
+                if (!sendControlAck(s, enhanced)) break;
+                continue;
+            }
             if (n > 8 * 1024 * 1024) break;
             if (n == 0) {
                 // v014 and later keepalive. No fake image is shown.
@@ -428,8 +444,9 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         if (GetKeyState(VK_CONTROL)&0x8000) {
             end.y += delta>0?-60:60;
             POINT a=point,b=point,c=point,d=point;
-            a.x-=55; b.x-=delta>0?85:30;
-            c.x+=55; d.x+=delta>0?85:30;
+            // Ctrl+wheel DOWN = pinch OUT; UP = pinch IN.
+            a.x-=55; b.x-=delta<0?85:30;
+            c.x+=55; d.x+=delta<0?85:30;
             enqueueControl(hwnd,4,a,b,c,d);
         } else {
             end.y+=delta>0?120:-120;
