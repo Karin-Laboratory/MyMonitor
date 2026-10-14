@@ -34,6 +34,16 @@ class WindowsSender(private val report: (String) -> Unit) {
     @Volatile private var connected = false
     @Volatile private var transportConnected = false
 
+    private fun readControl(input: java.io.InputStream) {
+        val packet = ByteArray(9)
+        var offset = 0
+        while (offset < packet.size) {
+            val n = input.read(packet,offset,packet.size-offset)
+            if (n < 0) throw java.io.EOFException("control ACK incomplete")
+            offset += n
+        }
+        if (packet[0].toInt() != 0) RemoteControlService.receive(packet)
+    }
     fun isRunning() = running.get()
     /** Clear a UVC JPEG queued before the screen source became active, or vice versa. */
     @Synchronized fun discardPending() {
@@ -111,7 +121,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                         s.use {
                             val out = DataOutputStream(s.getOutputStream())
                             val input = s.getInputStream()
-                            out.writeBytes("MMC9")
+                            out.writeBytes("MMC5")
                             report("受信機へTCP接続済み。映像フレーム待機中")
                             awaitingAckSince = 0L
                             var firstFrame = true
@@ -146,6 +156,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                                             out.writeInt(0) // MMC9 v014 heartbeat, no image
                                             out.flush()
                                             check(input.read() == 0x06) { "ハートビート応答なし" }
+                                            readControl(input)
                                             lastSentAt = SystemClock.elapsedRealtime()
                                         } finally { awaitingAckSince = 0L }
                                     }
@@ -168,6 +179,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                                     out.flush()
                                     val afterWrite = SystemClock.elapsedRealtime()
                                     check(input.read() == 0x06) { "ACK不一致または接続切断" }
+                                    readControl(input)
                                     lastSentAt = SystemClock.elapsedRealtime()
                                     connected = true
                                     if (firstFrame) {
