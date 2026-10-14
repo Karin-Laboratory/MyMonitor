@@ -366,8 +366,17 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
     }
     case WM_SYSKEYDOWN:
         if (w == 'R' && (GetKeyState(VK_MENU)&0x8000)) {
-            remoteControlEnabled.store(!remoteControlEnabled.load());
-            InvalidateRect(hwnd,nullptr,FALSE);
+            // Holding Alt+R repeats WM_SYSKEYDOWN; toggle only for initial press.
+            if ((static_cast<unsigned long long>(l) & (1ULL << 30)) == 0) {
+                const bool enabledNow = !remoteControlEnabled.load();
+                remoteControlEnabled.store(enabledNow);
+                if (!enabledNow) {
+                    // Old gestures must not execute after input is re-enabled.
+                    std::lock_guard<std::mutex> guard(controlMutex);
+                    controlQueue.clear();
+                }
+                queueRefresh();
+            }
             return 0;
         }
         break;
@@ -384,12 +393,17 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         if (mouseDragging) dragLast={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
         return 0;
     case WM_LBUTTONUP:
-        if (mouseDragging && GetTickCount64()-lastTouchMs > 700) {
-            dragLast={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
-            const ULONGLONG elapsed=GetTickCount64()-dragStarted;
-            const int dist=abs(dragLast.x-dragStart.x)+abs(dragLast.y-dragStart.y);
-            enqueueControl(hwnd,dist>12?3:elapsed>=500?2:1,dragStart,dragLast);
-            mouseDragging=false; ReleaseCapture();
+        if (mouseDragging) {
+            if (GetTickCount64()-lastTouchMs > 700) {
+                dragLast={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+                const ULONGLONG elapsed=GetTickCount64()-dragStarted;
+                const int dist=abs(dragLast.x-dragStart.x)+abs(dragLast.y-dragStart.y);
+                enqueueControl(hwnd,dist>12?3:elapsed>=500?2:1,dragStart,dragLast);
+            }
+            // Touch-synthesized mouse events may suppress a click, but must never
+            // suppress releasing Windows mouse capture.
+            mouseDragging=false;
+            ReleaseCapture();
         }
         return 0;
     case WM_XBUTTONUP: {
