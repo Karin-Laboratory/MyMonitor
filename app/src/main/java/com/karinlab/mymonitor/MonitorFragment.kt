@@ -117,6 +117,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     override fun onStart() {
         super.onStart()
+        ensureUsbMonitor()
+    }
+
+    private fun ensureUsbMonitor() {
         if (usbMonitor != null) {
             // Keep the same listener through a background/foreground round trip.
             refreshUsb()
@@ -313,7 +317,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     status("UVC native再接続失敗 ${nativeFailures}回。USB監視を再初期化 (${delay}ms)")
                     val generation = ++retryGeneration
                     retryHandler.postDelayed({
-                        if (generation == retryGeneration && isAdded && viewReady && usbMonitor == null) onStart()
+                        if (generation == retryGeneration && isAdded && viewReady && usbMonitor == null) ensureUsbMonitor()
                     }, delay)
                 }
             }
