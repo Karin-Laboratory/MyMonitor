@@ -223,6 +223,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                         }
                     } finally {
                         connected = false
+                        StreamHub.disarmControl()
                         transportConnected = false
                         awaitingAckSince = 0L
                         try { s.close() } catch (_: Exception) {}
