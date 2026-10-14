@@ -5,6 +5,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <windowsx.h>
 #include <gdiplus.h>
 #include <shlwapi.h>
 #include <vector>
@@ -20,6 +21,8 @@
 #include <condition_variable>
 #include <chrono>
 #include <cstdint>
+#include <array>
+#include <map>
 using namespace Gdiplus;
 static HWND windowHandle;
 // JPEG decode is isolated from TCP. ACK means the complete bounded packet was
@@ -58,6 +61,55 @@ static SOCKET discoverySocket = INVALID_SOCKET;
 static std::thread discoveryWorker;
 static std::mutex lockSocket;
 static std::thread worker;
+static std::atomic<bool> remoteControlEnabled{false};
+static std::mutex controlMutex;
+static std::vector<std::array<unsigned char,9>> controlQueue;
+static POINT dragStart{};
+static POINT dragLast{};
+static ULONGLONG dragStarted = 0;
+static bool mouseDragging = false;
+static bool touchPointerActive = false;
+static std::map<UINT32,POINT> touchStart, touchEnd;
+static bool normalized(HWND hwnd, POINT pt, uint16_t &nx, uint16_t &ny) {
+    RECT client{}; GetClientRect(hwnd,&client);
+    std::shared_ptr<DecodedFrame> frame;
+    { std::lock_guard<std::mutex> guard(lockFrame); frame = picture; }
+    if (!frame || frame->width == 0 || frame->height == 0) return false;
+    double scale = (std::min)(double(client.right)/frame->width,double(client.bottom)/frame->height);
+    const int w=int(frame->width*scale),h=int(frame->height*scale);
+    const int left=(client.right-w)/2, top=(client.bottom-h)/2;
+    if (w <= 0 || h <= 0 || pt.x < left || pt.y < top || pt.x >= left+w || pt.y >= top+h) return false;
+    nx=uint16_t((std::min)(65535.0,(std::max)(0.0,(pt.x-left)*65535.0/w)));
+    ny=uint16_t((std::min)(65535.0,(std::max)(0.0,(pt.y-top)*65535.0/h)));
+    return true;
+}
+static void enqueueControl(HWND hwnd, int op, POINT from, POINT to) {
+    if (!remoteControlEnabled.load() || !linkConnected.load()) return;
+    uint16_t x1,y1,x2,y2;
+    if (!normalized(hwnd,from,x1,y1) || !normalized(hwnd,to,x2,y2)) return;
+    std::array<unsigned char,9> data{};
+    data[0]=static_cast<unsigned char>(op);
+    auto put=[&](int i,uint16_t v){data[i]=static_cast<unsigned char>(v>>8);data[i+1]=static_cast<unsigned char>(v & 255);};
+    put(1,x1);put(3,y1);put(5,x2);put(7,y2);
+    std::lock_guard<std::mutex> lock(controlMutex);
+    if (controlQueue.size() >= 64) controlQueue.erase(controlQueue.begin());
+    controlQueue.push_back(data);
+}
+static bool sendControlAck(SOCKET s, bool enhanced) {
+    char ack[10] = {6};
+    if (enhanced) {
+        std::lock_guard<std::mutex> guard(controlMutex);
+        if (remoteControlEnabled.load() && !controlQueue.empty()) {
+            const auto packet=controlQueue.front();
+            controlQueue.erase(controlQueue.begin());
+            std::memcpy(ack+1,packet.data(),packet.size());
+        }
+    }
+    int sent=0, count=enhanced?10:1;
+    while (sent<count) {int n=send(s,ack+sent,count-sent,0);if(n<=0)return false;sent+=n;}
+    return true;
+}
+
 static bool readExact(SOCKET s, char* dst, int size) {
     while (size > 0 && alive) { int n = recv(s, dst, size, 0); if (n <= 0) return false; dst += n; size -= n; }
     return size == 0;
@@ -227,7 +279,8 @@ static void receiveLoop() {
             sessionGeneration.fetch_add(1);
             continue;
         }
-        if (!readOk || std::memcmp(magic, "MMC9", 4) != 0) {
+        const bool enhanced = readOk && std::memcmp(magic, "MMC5", 4) == 0;
+        if (!readOk || (!enhanced && std::memcmp(magic, "MMC9", 4) != 0)) {
             closesocket(s);
             sessionGeneration.fetch_add(1);
             continue;
@@ -244,8 +297,7 @@ static void receiveLoop() {
             if (n > 8 * 1024 * 1024) break;
             if (n == 0) {
                 // v014 and later keepalive. No fake image is shown.
-                const char ack = 0x06;
-                if (send(s, &ack, 1, 0) != 1) break;
+                if (!sendControlAck(s, enhanced)) break;
                 continue;
             }
             std::vector<unsigned char> bytes(n);
@@ -262,8 +314,7 @@ static void receiveLoop() {
             pendingCV.notify_one();
             // Critical: ACK receipt immediately, do NOT make Android wait
             // for JPEG decode, DIB allocation, UI thread or OBS redraw.
-            const char ack = 0x06;
-            if (send(s, &ack, 1, 0) != 1) break;
+            if (!sendControlAck(s, enhanced)) break;
         }
         // Keep the last displayed frame; reject decode from a closed session.
         sessionGeneration.fetch_add(1);
@@ -272,6 +323,8 @@ static void receiveLoop() {
             closesocket(s);
             peer = INVALID_SOCKET;
         }
+        remoteControlEnabled.store(false);
+        { std::lock_guard<std::mutex> guard(controlMutex); controlQueue.clear(); }
         updateLink(false);
     }
 }
@@ -286,13 +339,14 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         const ULONGLONG now = GetTickCount64();
         if (now - lastTitleUpdate >= 1000) {
             lastTitleUpdate = now;
-            std::wstring title = L"My Cast Receiver 019";
+            std::wstring title = L"My Cast Receiver 025";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
                 if (picture) title += L" - " + std::to_wstring(picture->width) +
                     L" x " + std::to_wstring(picture->height);
             }
             if (!linkConnected.load()) title += L" [reconnecting / last frame]";
+            title += remoteControlEnabled.load() ? L" [Remote ON: Alt+R]" : L" [Remote OFF: Alt+R]";
             const auto rejected = rejectedFrames.load();
             if (rejected) title += L" [skipped " + std::to_wstring(rejected) + L" bad frames]";
             title += L" [rx " + std::to_wstring(lastReceiveMs.load()) +
@@ -305,6 +359,84 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
+    case WM_SYSKEYDOWN:
+        if (w == 'R' && (GetKeyState(VK_MENU)&0x8000)) {
+            remoteControlEnabled.store(!remoteControlEnabled.load());
+            InvalidateRect(hwnd,nullptr,FALSE);
+            return 0;
+        }
+        break;
+    case WM_LBUTTONDOWN:
+        if (remoteControlEnabled.load()) {
+            dragStart={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+            dragLast=dragStart;
+            dragStarted=GetTickCount64();
+            mouseDragging=true;
+            SetCapture(hwnd);
+        }
+        return 0;
+    case WM_MOUSEMOVE:
+        if (mouseDragging) dragLast={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+        return 0;
+    case WM_LBUTTONUP:
+        if (mouseDragging) {
+            dragLast={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+            const ULONGLONG elapsed=GetTickCount64()-dragStarted;
+            const int dist=abs(dragLast.x-dragStart.x)+abs(dragLast.y-dragStart.y);
+            enqueueControl(hwnd,dist>12?3:elapsed>=500?2:1,dragStart,dragLast);
+            mouseDragging=false; ReleaseCapture();
+        }
+        return 0;
+    case WM_RBUTTONUP: {
+        POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+        enqueueControl(hwnd,5,point,point);
+        return 0;
+    }
+    case WM_MOUSEWHEEL: {
+        POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+        ScreenToClient(hwnd,&point);
+        POINT end=point;
+        const int delta=GET_WHEEL_DELTA_WPARAM(w);
+        if (GetKeyState(VK_CONTROL)&0x8000) {
+            end.y += delta>0?-60:60;
+            enqueueControl(hwnd,4,point,end);
+        } else {
+            end.y+=delta>0?120:-120;
+            enqueueControl(hwnd,3,point,end);
+        }
+        return 0;
+    }
+    case WM_POINTERDOWN:
+    case WM_POINTERUPDATE:
+    case WM_POINTERUP: {
+        const UINT32 id=GET_POINTERID_WPARAM(w);
+        POINTER_INFO info{};
+        if (GetPointerInfo(id,&info) && info.pointerType == PT_TOUCH) {
+            POINT pt=info.ptPixelLocation;
+            ScreenToClient(hwnd,&pt);
+            if (message==WM_POINTERDOWN) {
+                touchStart[id]=pt; touchEnd[id]=pt;
+            } else if(touchStart.count(id)) {
+                touchEnd[id]=pt;
+                if (message==WM_POINTERUP) {
+                    if (touchStart.size()>=2) {
+                        auto it=touchStart.begin(); auto it2=std::next(it);
+                        enqueueControl(hwnd,4,it->second,touchEnd[it->first]);
+                        touchStart.clear(); touchEnd.clear();
+                    } else {
+                        POINT start=touchStart[id], finish=touchEnd[id];
+                        enqueueControl(hwnd,(abs(start.x-finish.x)+abs(start.y-finish.y)>12)?3:1,start,finish);
+                        touchStart.erase(id);touchEnd.erase(id);
+                    }
+                }
+            }
+            return 0;
+        }
+        break;
+    }
+    case WM_CAPTURECHANGED:
+        mouseDragging=false;
+        return 0;
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(l);
         info->ptMaxTrackSize.x = (std::max)(info->ptMaxTrackSize.x, 4096L);
