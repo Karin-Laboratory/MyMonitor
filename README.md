@@ -2,14 +2,16 @@
 
 One Android app for **USB UVC HDMI capture + native Android screen/audio streaming** and a standalone Windows x64 MJPEG receiver. The input switches automatically: a successfully opened USB UVC camera takes priority; unplugging returns to the Android screen (after OS permission when required).
 
-## Latest: v0.16
+## Current release: v0.23 (RC candidate, physical acceptance pending)
 
-- [mymonitor016.apk](https://github.com/Karin-Laboratory/MyMonitor/releases/download/v0.16/mymonitor016.apk)
-- [mycastreceiver016.exe](https://github.com/Karin-Laboratory/MyMonitor/releases/download/v0.16/mycastreceiver016.exe)
-- [Instructions / migration](TRANSFER.md)
-- [Specification-to-code audit and acceptance matrix](SPEC_AUDIT_016.md)
+- [mymonitor023.apk](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.23)
+- [mycastreceiver023.exe](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.23)
+- [RC audit and device acceptance matrix](RC_AUDIT_023.md)
+- [Install and operational guidance](TRANSFER.md)
 
-v016 fixes USB detach/native screen fallback, uses a previously paired Windows IPv4 through verified TCP even on networks blocking discovery broadcasts, synchronizes notification controls, and ensures stopping streaming does not halt Android screen recording. It **retains v015's user-confirmed low-latency sender/decoder/renderer**, including JPEG latest-frame replacement, early ACK and GDI BitBlt. Full HD / portrait rendering preserves aspect ratio, and eligible Android playback audio travels over separate TCP 57009.
+v023 focuses on UVC disconnect/reconnect stability. The Activity now debounces physical USB events; the Fragment is the sole owner of USBMonitor and CameraUVC and rejects stale monitor-epoch callbacks. Permission timeouts and retry backoff are tested. The v015 low-latency path, v018 preview geometry, v019 audio recovery and v020 landscape screen transmission are retained.
+
+**Status:** GitHub CI covers compilation and software regression but cannot test physical USB hotplug. Do not describe this candidate as field-proven until Pixel 10a acceptance testing passes.
 
 ## Features and permissions
 
@@ -21,7 +23,7 @@ Windows receiver is one standalone EXE. OBS can use Window Capture. TCP 57007 JP
 
 ## Build and tests
 
-The GitHub Actions workflow builds the Java/Kotlin APK and bundled native UVC code with Gradle/Java 17, builds a static Windows x64 EXE using MinGW-w64, runs JUnit and source-contract tests, then exercises the EXE under Windows with JPEG/ACK, UDP discovery, false receiver, audio, reconnection and >2-minute soak tests. It verifies SHA-256 checksums before publishing.
+The GitHub Actions workflow builds the Java/Kotlin APK and bundled native UVC code with Gradle/Java 17, builds a native Windows x64 EXE using MSVC, runs JUnit and source-contract tests, then exercises the EXE under Windows with JPEG/ACK, UDP discovery, false receiver, audio, reconnection and >2-minute soak tests. It verifies SHA-256 checksums before publishing.
 
 UVC backend: [AndroidUSBCamera](https://github.com/ernestp/AndroidUSBCamera), Apache-2.0, pinned to a known source commit and patched with an MJPEG callback. Audio/recording/SMB and detailed limitations are documented in [TRANSFER.md](TRANSFER.md).
 
