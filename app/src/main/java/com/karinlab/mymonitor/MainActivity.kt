@@ -137,6 +137,19 @@ class MainActivity : AppCompatActivity() {
         controls.addView(smb)
         controls.addView(scan)
         controls.addView(button("Windowsへ転送") { discoverWindows() })
+        controls.addView(button("遠隔操作") {
+            if (!RemoteControlService.active()) {
+                showStatus("設定のユーザー補助でMyMonitorの遠隔操作を有効にしてください")
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } else if (StreamHub.source() != CapturePolicy.Source.SCREEN ||
+                !ScreenStreamService.projectionActive) {
+                StreamHub.disarmControl()
+                showStatus("スマホ画面をWindowsへ転送中のみ遠隔操作できます")
+            } else {
+                StreamHub.setControlArmed(!StreamHub.controlArmed)
+                showStatus(if (StreamHub.controlArmed) "遠隔操作の許可ON（WindowsでAlt+R）" else "遠隔操作の許可OFF")
+            }
+        })
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         // Reserve real room for the bottom toolbar rather than letting its
         // rotated/higher landscape layout cover the HDMI video viewport.
