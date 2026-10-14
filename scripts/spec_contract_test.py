@@ -74,7 +74,7 @@ assert "PowerManager.PARTIAL_WAKE_LOCK" in service
 assert "refreshPowerLock()" in service
 assert "onTaskRemoved(" in service
 assert "onTrimMemory(" in service
-assert 'versionCode 25' in file("app/build.gradle")
+assert 'versionCode 26' in file("app/build.gradle")
 print("V017 POWER/LIFECYCLE CONTRACTS RETAINED (v018 preview supersedes ratio check)")
 
 # v018: the UVC image-size decision belongs to the parent viewport exactly once.
@@ -88,7 +88,7 @@ assert "camera?.setRenderSize(" not in fragment
 assert "PreviewGeometry.centered(" in fragment
 assert "fun centered(" in preview_geometry
 assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
-assert "versionCode 25" in file("app/build.gradle")
+assert "versionCode 26" in file("app/build.gradle")
 print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
 
 # v019 audio lifecycle and Windows binary provenance.
@@ -106,7 +106,7 @@ assert 'playbackAudioAllowed' in hub
 assert "waveOutReset(device)" in file("windows/audio_receiver.h")
 assert "VERSIONINFO" in file("windows/receiver.rc")
 assert "msvc" in file(".github/workflows/build-apk.yml").lower()
-assert 'versionCode 25' in file("app/build.gradle")
+assert 'versionCode 26' in file("app/build.gradle")
 print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")
 assert "private var opening = false" in fragment
 assert "if (opening || closing || camera != null || !physicalPresent(device)) return" in fragment
@@ -134,7 +134,7 @@ assert "reconcilePhysicalUsb()" in activity and "usbReconcileTask" in activity
 assert "staleCallbacksMustNotChangeNewMonitorState" in tests
 assert "spuriousDisconnectMustNotDestroyActiveCamera" in tests
 assert "nativeFailureRetriesAreBounded" in tests
-assert "versionName '0.25'" in file("app/build.gradle")
+assert "versionName '0.26'" in file("app/build.gradle")
 assert "retryDelayMs(" in policy
 assert "MyCastReceiver.exe" not in file(".github/workflows/build-apk.yml")
 print("V023 RC USB EVENT EPOCH / TIMEOUT / RELEASE CONTRACT PASS")
@@ -157,3 +157,9 @@ assert "GET_POINTERID_WPARAM" in receiver and "WM_MOUSEWHEEL" in receiver
 assert "RemoteControlService" in file("app/src/main/AndroidManifest.xml")
 assert "遠隔操作" in activity
 print("V025 SCREEN-ONLY REMOTE TOUCH CONTRACT PASS")
+
+assert "getRealSize(size)" in remote
+assert "GET_XBUTTON_WPARAM" in receiver
+assert "XBUTTON1 ? 6 : 7" in receiver
+assert "GLOBAL_ACTION_HOME" in remote
+print("V026 FULL PHYSICAL Y COORDINATES + MOUSE SIDE BUTTON CONTRACT PASS")
