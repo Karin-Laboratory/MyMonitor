@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        video = FrameLayout(this).apply { id = View.generateViewId() }
+        video = FrameLayout(this).apply { id = 0x04D4D020 }
         root.addView(video, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
 
@@ -134,6 +134,7 @@ class MainActivity : AppCompatActivity() {
         controls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateVideoViewport() }
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateVideoViewport() }
         monitor = (supportFragmentManager.findFragmentByTag("monitor") as? MonitorFragment) ?: MonitorFragment()
+        cameraMounted = monitor.isAdded
         val filter = IntentFilter().apply { addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED); addAction(UsbManager.ACTION_USB_DEVICE_DETACHED) }
         ContextCompat.registerReceiver(this, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         receiverRegistered = true
@@ -384,8 +385,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun mountCamera() {
         if (cameraMounted) return
+        if (supportFragmentManager.isStateSaved) {
+            video.postDelayed({ if (!isFinishing && !isDestroyed) mountCamera() }, 300)
+            return
+        }
         cameraMounted = true
-        supportFragmentManager.beginTransaction().replace(video.id, monitor, "monitor").commitNow()
+        if (!monitor.isAdded) supportFragmentManager.beginTransaction().replace(video.id, monitor, "monitor").commitNow()
     }
 
     @Deprecated("Permission callback")
