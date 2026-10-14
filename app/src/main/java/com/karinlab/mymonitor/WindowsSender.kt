@@ -121,10 +121,13 @@ class WindowsSender(private val report: (String) -> Unit) {
                         s.use {
                             val out = DataOutputStream(s.getOutputStream())
                             val input = s.getInputStream()
-                            out.writeBytes("MMC5")
+                            // MMC6 adds an explicit source marker. Frame and ACK timing
+                            // remain exactly as in MMC5; no inference from JPEG aspect ratio.
+                            out.writeBytes("MMC6")
                             report("受信機へTCP接続済み。映像フレーム待機中")
                             awaitingAckSince = 0L
                             var firstFrame = true
+                            var announcedSource = -1
                             var lastSentAt = SystemClock.elapsedRealtime()
                             var sampleWindowMs = lastSentAt
                             var samples = 0
@@ -146,6 +149,25 @@ class WindowsSender(private val report: (String) -> Unit) {
                                 }
                             }, "WindowsSendWatchdog").apply { isDaemon = true; start() }
                             while (running.get()) {
+                                // Notify source changes even on a motionless screen, without
+                                // disturbing the JPEG queue, audio socket or UVC callback.
+                                val source = when (StreamHub.source()) {
+                                    CapturePolicy.Source.UVC -> 1
+                                    CapturePolicy.Source.SCREEN -> 2
+                                    else -> 0
+                                }
+                                if (source != announcedSource) {
+                                    awaitingAckSince = SystemClock.elapsedRealtime()
+                                    try {
+                                        out.writeInt(-1) // MMC6 source-mode marker, not a JPEG
+                                        out.writeByte(source)
+                                        out.flush()
+                                        check(input.read() == 0x06) { "ソース切替ACK不一致" }
+                                        readControl(input)
+                                        lastSentAt = SystemClock.elapsedRealtime()
+                                        announcedSource = source
+                                    } finally { awaitingAckSince = 0L }
+                                }
                                 val polled = frames.poll(500, TimeUnit.MILLISECONDS)
                                 if (polled == null) {
                                     // A static Android screen may deliver no new ImageReader
@@ -162,6 +184,14 @@ class WindowsSender(private val report: (String) -> Unit) {
                                     }
                                     continue
                                 }
+                                // A source can switch while the queue poll is waiting.
+                                // Discard the old-source frame and send the mode marker first.
+                                val currentSource = when (StreamHub.source()) {
+                                    CapturePolicy.Source.UVC -> 1
+                                    CapturePolicy.Source.SCREEN -> 2
+                                    else -> 0
+                                }
+                                if (currentSource != announcedSource || currentSource == 0) continue
                                 var frame = polled
                                 // Discard stale frames accumulated while the preceding JPEG was in flight.
                                 while (true) { frame = frames.poll() ?: break }
