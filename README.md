@@ -2,16 +2,17 @@
 
 One Android app for **USB UVC HDMI capture + native Android screen/audio streaming** and a standalone Windows x64 MJPEG receiver. The input switches automatically: a successfully opened USB UVC camera takes priority; unplugging returns to the Android screen (after OS permission when required).
 
-## Current release: v0.23 (RC candidate, physical acceptance pending)
+## Current release: v0.25 (experimental remote screen control)
 
-- [mymonitor023.apk](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.23)
-- [mycastreceiver023.exe](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.23)
-- [RC audit and device acceptance matrix](RC_AUDIT_023.md)
-- [Install and operational guidance](TRANSFER.md)
+- [Android APK / Windows EXE release](https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.25)
+- [v025 control specification and security notes](SPEC_FIX_025.md)
+- [Installation and operations](TRANSFER.md)
 
-v023 focuses on UVC disconnect/reconnect stability. The Activity now debounces physical USB events; the Fragment is the sole owner of USBMonitor and CameraUVC and rejects stale monitor-epoch callbacks. Permission timeouts and retry backoff are tested. The v015 low-latency path, v018 preview geometry, v019 audio recovery and v020 landscape screen transmission are retained.
+v025 adds an **opt-in remote screen-control channel** to the existing Android-to-Windows MJPEG/ACK transport. It controls the **Android screen only**, never the external UVC source. Enable MyMonitor in Android Accessibility Settings, start screen capture, arm the app's 遠隔操作 toggle, then press **Alt+R** in MyCastReceiver. Both toggles default disabled or are cleared on source/transport changes.
 
-**Status:** GitHub CI covers compilation and software regression but cannot test physical USB hotplug. Do not describe this candidate as field-proven until Pixel 10a acceptance testing passes.
+Mouse click: tap; hold/release: long press; drag/release: swipe; wheel: scroll; Ctrl+wheel: symmetric pinch; right click: Back. Windows touch pointer gestures are converted to strokes, including paired two-finger start/end paths. Motion is applied on release, not streamed continuously. Both components must be v025 for MMC5 reverse-control packets.
+
+**Security:** Android accessibility permission can drive the entire screen. Only use a private LAN and explicitly arm control per session. Peer cryptographic pairing is not implemented. Physical gesture and touch screen validation remains pending.
 
 ## Features and permissions
 
