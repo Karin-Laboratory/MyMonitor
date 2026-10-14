@@ -109,7 +109,7 @@ assert "msvc" in file(".github/workflows/build-apk.yml").lower()
 assert 'versionCode 21' in file("app/build.gradle")
 print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")
 assert "private var opening = false" in fragment
-assert "if (opening || camera != null) return" in fragment
+assert "if (opening || closing || camera != null || !physicalPresent(device)) return" in fragment
 assert "supportFragmentManager.isStateSaved" in activity
 assert "Screen rotation capture" in service
 print("V020 UVC SERIALIZATION + SCREEN RESIZE CONTRACT PASS")
