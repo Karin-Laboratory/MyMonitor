@@ -1,4 +1,4 @@
-"""v029 native receiver test: fast Ctrl-wheel batches are bounded pinch packets.
+"""v030 native receiver test: fast Ctrl-wheel batches are bounded pinch packets.
 
 Runs against the built Windows EXE and reads its actual MMC6 reverse ACKs.
 Android GestureResultCallback queuing is checked by source/Android build, not
@@ -32,7 +32,7 @@ WM_SYSKEYDOWN = 0x0104
 WM_CLOSE = 0x0010
 MK_CONTROL = 0x0008
 WHEEL_DELTA = 120
-exe = pathlib.Path("mycastreceiver029.exe").resolve()
+exe = pathlib.Path("mycastreceiver030.exe").resolve()
 jpeg = pathlib.Path(sys.argv[1]).read_bytes()
 
 def read_all(sock, count):
@@ -108,19 +108,19 @@ try:
 
         point = POINT(960, 540)
         assert u.ClientToScreen(hwnd, ctypes.byref(point))
-        # 5 detents in one 160ms batch -> exactly one zoom-in gesture.
+        # 5 DOWN detents in one 160ms batch -> exactly one zoom-out gesture.
         for _ in range(5):
             wheel(hwnd, -WHEEL_DELTA, point)
         down = wait_pinch(sock)
-        assert coord(down, 5) < coord(down, 1), "Wheel DOWN first finger did not move left"
-        assert coord(down, 13) > coord(down, 9), "Wheel DOWN second finger did not move right"
+        assert coord(down, 5) > coord(down, 1), "Wheel DOWN first finger did not move right"
+        assert coord(down, 13) < coord(down, 9), "Wheel DOWN second finger did not move left"
 
-        # Five upward detents -> exactly one zoom-out gesture.
+        # Five UP detents -> exactly one zoom-in gesture.
         for _ in range(5):
             wheel(hwnd, WHEEL_DELTA, point)
         up = wait_pinch(sock)
-        assert coord(up, 5) > coord(up, 1), "Wheel UP first finger did not move right"
-        assert coord(up, 13) < coord(up, 9), "Wheel UP second finger did not move left"
+        assert coord(up, 5) < coord(up, 1), "Wheel UP first finger did not move left"
+        assert coord(up, 13) > coord(up, 9), "Wheel UP second finger did not move right"
 
         # High-resolution (half-detent) devices accumulate two deltas into one.
         wheel(hwnd, -60, point)
@@ -135,7 +135,7 @@ try:
             wheel(hwnd, -120, point)
         time.sleep(.25)
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
-        print("V029 RAPID WHEEL BATCH / ZOOM DIRECTION / FRACTIONAL DETENTS / OFF SAFETY PASS")
+        print("V030 RAPID WHEEL BATCH / ZOOM DIRECTION / FRACTIONAL DETENTS / OFF SAFETY PASS")
 finally:
     if hwnd:
         u.PostMessageW(hwnd, WM_CLOSE, 0, 0)
