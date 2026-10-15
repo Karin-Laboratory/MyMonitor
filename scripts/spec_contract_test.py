@@ -213,3 +213,16 @@ wheel_test = file("windows/wheel_test.py")
 assert 'Wheel DOWN first finger did not move right' in wheel_test
 assert 'Wheel UP first finger did not move left' in wheel_test
 print("V030 CTRL-WHEEL UP=ZOOM IN, DOWN=ZOOM OUT CONTRACT PASS")
+
+# v031 UI: a launcher re-entry without physical UVC has a real, interactive
+# settings surface. Neither source arbitration nor the stable gesture queue
+# may be replaced by this presentation-only change.
+assert 'private lateinit var setupOverlay: ScrollView' in activity
+assert 'private fun refreshPresentation()' in activity
+assert 'setupOverlay.visibility = if (uvcConnected) View.GONE else View.VISIBLE' in activity
+assert 'setup.addView(setupAction("📺 Windows受信機を探す")' in activity
+assert 'setup.addView(setupAction("📱 Android画面の共有を許可")' in activity
+assert 'setupRemoteButton = setupAction(' in activity
+assert 'override fun onNewIntent(' in activity
+assert 'android:launchMode="singleTop"' in manifest
+print("V031 PRESENTATION: actionable no-UVC settings with Activity reuse PASS")
