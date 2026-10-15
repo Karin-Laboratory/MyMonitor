@@ -146,6 +146,11 @@ jobs:
         run: |
           python windows/wheel_test.py test.jpg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: v031 remote keyboard UTF-8 and safe-off regression on native EXE
+        shell: pwsh
+        run: |
+          python windows/keyboard_test.py test.jpg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Two-minute reliability and corrupted JPEG regression
         shell: pwsh
         run: |
