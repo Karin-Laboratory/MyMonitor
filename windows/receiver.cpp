@@ -124,7 +124,7 @@ static LRESULT CALLBACK inputEditProc(HWND hwnd, UINT message, WPARAM w, LPARAM 
     if (message == WM_IME_STARTCOMPOSITION) composingText = true;
     if (message == WM_IME_ENDCOMPOSITION) composingText = false;
     if (message == WM_IME_KEYDOWN && w == VK_RETURN && composingText) compositionReturn = true;
-    if (message == WM_KEYUP && w == VK_RETURN) compositionReturn = false;
+    if ((message == WM_KEYUP || message == WM_IME_KEYUP) && w == VK_RETURN) compositionReturn = false;
     if (message == WM_KEYDOWN && w == VK_F11) {
         SendMessageW(GetParent(hwnd), WM_KEYDOWN, w, l);
         return 0;
