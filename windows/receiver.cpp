@@ -6,6 +6,8 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <windowsx.h>
+#include <imm.h>
+#pragma comment(lib, "imm32.lib")
 #include <gdiplus.h>
 #include <shlwapi.h>
 #include <vector>
@@ -607,7 +609,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             lastTitleUpdate = now;
             RECT client{};
             GetClientRect(hwnd, &client);
-            std::wstring title = L"My Cast Receiver 031 | ";
+            std::wstring title = L"My Cast Receiver 032 | ";
             title += linkConnected.load() ? L"Android接続中" : L"Android未接続・接続待機中";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
@@ -624,6 +626,27 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    }
+    case WM_IME_STARTCOMPOSITION:
+    case WM_IME_COMPOSITION: {
+        // Anchor both composition and candidates near the last clicked input.
+        RECT client; GetClientRect(hwnd, &client);
+        POINT anchor = dragStart;
+        anchor.x = (std::max)(12L, (std::min)(anchor.x, client.right - 240));
+        anchor.y = (std::max)(12L, (std::min)(anchor.y + 28, client.bottom - 160));
+        HIMC imc = ImmGetContext(hwnd);
+        if (imc) {
+            COMPOSITIONFORM composition{};
+            composition.dwStyle = CFS_POINT;
+            composition.ptCurrentPos = anchor;
+            ImmSetCompositionWindow(imc, &composition);
+            CANDIDATEFORM candidate{};
+            candidate.dwStyle = CFS_CANDIDATEPOS;
+            candidate.ptCurrentPos = anchor;
+            ImmSetCandidateWindow(imc, &candidate);
+            ImmReleaseContext(hwnd, imc);
+        }
+        break;
     }
     case WM_LBUTTONDOWN:
         if (remoteControlEnabled.load() && GetTickCount64()-lastTouchMs > 700) {

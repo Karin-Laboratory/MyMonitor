@@ -1,4 +1,4 @@
-"""v031 native receiver test: fast Ctrl-wheel batches are bounded pinch packets.
+"""v032 native receiver test: fast Ctrl-wheel batches are bounded pinch packets.
 
 Runs against the built Windows EXE and reads its actual MMC6 reverse ACKs.
 Android GestureResultCallback queuing is checked by source/Android build, not
@@ -32,7 +32,7 @@ WM_SYSKEYDOWN = 0x0104
 WM_CLOSE = 0x0010
 MK_CONTROL = 0x0008
 WHEEL_DELTA = 120
-exe = pathlib.Path("mycastreceiver031.exe").resolve()
+exe = pathlib.Path("mycastreceiver032.exe").resolve()
 jpeg = pathlib.Path(sys.argv[1]).read_bytes()
 
 def read_all(sock, count):
@@ -126,7 +126,7 @@ try:
             wheel(hwnd, -120, point)
         time.sleep(.25)
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
-        print("V031 RAPID WHEEL BATCH / ZOOM DIRECTION / FRACTIONAL DETENTS / OFF SAFETY PASS")
+        print("V032 RAPID WHEEL BATCH / ZOOM DIRECTION / FRACTIONAL DETENTS / OFF SAFETY PASS")
 finally:
     if hwnd:
         u.PostMessageW(hwnd, WM_CLOSE, 0, 0)

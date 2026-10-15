@@ -89,8 +89,21 @@ class ScreenStreamService : Service() {
 
     /** Hold CPU awake only during an active capture/stream or recording.
      * This does not override Android foreground-service limits or force-stop. */
+    private var displayWakeLock: PowerManager.WakeLock? = null
+
     private fun refreshPowerLock() {
         val active = projectionActive || StreamHub.uvcReady || screenRecording || StreamHub.uvcRecording
+        val keepDisplay = active && getSharedPreferences("monitor", MODE_PRIVATE)
+            .getBoolean("keep_screen_unlocked", false)
+        if (keepDisplay) {
+            @Suppress("DEPRECATION")
+            val lock = displayWakeLock ?: (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "MyMonitor:KeepDisplayOn")
+                .apply { setReferenceCounted(false); displayWakeLock = this }
+            lock.acquire(20000)
+        } else if (displayWakeLock?.isHeld == true) {
+            displayWakeLock?.release()
+        }
         if (active) {
             try {
                 val power = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -263,11 +276,8 @@ class ScreenStreamService : Service() {
     }
 
     private fun optimal(w: Int, h: Int): Pair<Int, Int> {
-        val long = maxOf(w, h).coerceAtLeast(2)
-        val short = min(w, h).coerceAtLeast(2)
-        val ratio = min(1.0, min(1920.0 / long, 1080.0 / short))
-        return ((w * ratio).toInt() and -2).coerceAtLeast(2) to
-            ((h * ratio).toInt() and -2).coerceAtLeast(2)
+        // ImageReader/JPEG accepts the display's actual dimensions.
+        return w.coerceAtLeast(2) to h.coerceAtLeast(2)
     }
 
     private fun screenSize(): Pair<Int, Int> {
@@ -600,6 +610,7 @@ class ScreenStreamService : Service() {
     }
 
     override fun onDestroy() {
+        if (displayWakeLock?.isHeld == true) displayWakeLock?.release()
         android.util.Log.w("MyMonitorPower", "Service stopped uptime=" +
             (android.os.SystemClock.elapsedRealtime() - uptime) + "ms")
         alive.set(false)

@@ -162,6 +162,7 @@ class RemoteControlService : AccessibilityService() {
                 }
                 gestureRunning = true
                 val serial = ++gestureSerial
+                if (op == 1) service.softKeyboardController.setShowMode(SHOW_MODE_HIDDEN)
                 val accepted = service.dispatchGesture(builder.build(),
                     object : AccessibilityService.GestureResultCallback() {
                         override fun onCompleted(gesture: GestureDescription?) = finish()
@@ -192,13 +193,20 @@ class RemoteControlService : AccessibilityService() {
         instance = this
         Log.i("MyMonitor-Control", "Accessibility enabled")
     }
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (canControl(this)) {
+            softKeyboardController.setShowMode(SHOW_MODE_HIDDEN)
+        } else {
+            softKeyboardController.setShowMode(SHOW_MODE_AUTO)
+        }
+    }
     override fun onInterrupt() = Unit
     override fun onDestroy() {
         if (instance === this) {
             instance = null
             resetQueued()
         }
+        softKeyboardController.setShowMode(SHOW_MODE_AUTO)
         super.onDestroy()
     }
 }

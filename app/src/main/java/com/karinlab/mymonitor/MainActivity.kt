@@ -153,8 +153,19 @@ class MainActivity : AppCompatActivity() {
             if (StreamHub.selectedHost == null) discoverWindows()
             else beginScreenConsent()
         })
-        setupRemoteButton = setupAction("🔒 遠隔操作を許可") { toggleRemoteControlPermission() }
+        setupRemoteButton = setupAction("🔒 遠隔操作を許可する") { toggleRemoteControlPermission() }
         setup.addView(setupRemoteButton)
+        setup.addView(android.widget.CheckBox(this).apply {
+            text = "画面ロックを使用しない"
+            setTextColor(Color.WHITE)
+            isChecked = prefs.getBoolean("keep_screen_unlocked", false)
+            setOnCheckedChangeListener { _, checked ->
+                prefs.edit().putBoolean("keep_screen_unlocked", checked).apply()
+                startService(Intent(this@MainActivity, ScreenStreamService::class.java).apply {
+                    action = ScreenStreamService.ACTION_SOURCE_CHANGED
+                })
+            }
+        })
         setup.addView(setupAction("⚙ Windows接続先を手動設定") { windowsSettings() })
         setupReturnButton = setupAction("← Android画面へ戻る") {
             if (StreamHub.uvcReady) {
@@ -288,8 +299,8 @@ class MainActivity : AppCompatActivity() {
             else "← Android画面へ戻る"
         setupRemoteButton.text = when {
             !RemoteControlService.active() -> "🔒 遠隔操作の権限を設定"
-            StreamHub.controlArmed -> "🔓 遠隔操作を停止"
-            else -> "🔒 遠隔操作を許可"
+            StreamHub.controlArmed -> "🔓 遠隔操作を停止する"
+            else -> "🔒 遠隔操作を許可する"
         }
     }
 

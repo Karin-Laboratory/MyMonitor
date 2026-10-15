@@ -1,4 +1,4 @@
-"""v031 receiver keyboard framing smoke test against the actual native EXE.
+"""v032 receiver keyboard framing smoke test against the actual native EXE.
 
 Tests Win32 UTF-16 -> UTF-8 and the existing 17-byte MMC6 reverse ACK;
 Android accessibility behavior still requires phone-side testing.
@@ -21,7 +21,7 @@ u.PostMessageW.restype = ctypes.c_bool
 
 WM_CHAR, WM_KEYDOWN, WM_SYSKEYDOWN, WM_CLOSE = 0x0102, 0x0100, 0x0104, 0x0010
 VK_BACK = 0x08
-exe = pathlib.Path("mycastreceiver031.exe").resolve()
+exe = pathlib.Path("mycastreceiver032.exe").resolve()
 jpeg = pathlib.Path(sys.argv[1]).read_bytes()
 
 def ack(sock, payload):
@@ -72,7 +72,7 @@ try:
         u.SendMessageW(hwnd, WM_CHAR, ord("c"), 0)
         packet = ack(sock, struct.pack("!I", 0))
         assert packet[:3] == bytes([8, 1, ord("c")]), packet
-    print("V031 NATIVE UTF8 KEYBOARD / SAFE-OFF / UVC ISOLATION PASS")
+    print("V032 NATIVE UTF8 KEYBOARD / SAFE-OFF / UVC ISOLATION PASS")
 finally:
     if hwnd:
         u.PostMessageW(hwnd, WM_CLOSE, 0, 0)
