@@ -7,6 +7,9 @@ concurrency:
   group: mymonitor-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   build:
     runs-on: ubuntu-latest
