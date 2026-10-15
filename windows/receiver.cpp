@@ -145,8 +145,8 @@ static void flushPinchWheel(HWND hwnd) {
     const int endRadius = (std::max)(int(span * 0.045), (std::min)(
         int(span * 0.42), int(startRadius * (detents > 0 ? (1.0 / scale) : scale))));
     const int safeRadius = (std::max)(startRadius, endRadius) + 2;
-    const int midX = (std::clamp)(pinchAnchor.x, left + safeRadius, left + width - safeRadius - 1);
-    const int midY = (std::clamp)(pinchAnchor.y, top + 1, top + height - 2);
+    const int midX = (std::clamp)(static_cast<int>(pinchAnchor.x), left + safeRadius, left + width - safeRadius - 1);
+    const int midY = (std::clamp)(static_cast<int>(pinchAnchor.y), top + 1, top + height - 2);
     POINT a{midX-startRadius, midY}, b{midX-endRadius, midY};
     POINT c{midX+startRadius, midY}, d{midX+endRadius, midY};
     // DOWN (negative detents) moves fingers OUT and zooms IN.
