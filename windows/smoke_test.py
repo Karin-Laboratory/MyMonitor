@@ -16,7 +16,7 @@ u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctyp
 u.SendMessageW.restype = ctypes.c_ssize_t
 u.PostMessageW.argtypes = u.SendMessageW.argtypes
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-process = subprocess.Popen([str(Path('mycastreceiver032.exe').resolve())])
+process = subprocess.Popen([str(Path('mycastreceiver033.exe').resolve())])
 try:
     deadline = time.monotonic() + 15
     hwnd = None

@@ -1,4 +1,4 @@
-"""v032 receiver keyboard framing smoke test against the actual native EXE.
+"""v033 receiver keyboard framing smoke test against the actual native EXE.
 
 Tests Win32 UTF-16 -> UTF-8 and the existing 17-byte MMC6 reverse ACK;
 Android accessibility behavior still requires phone-side testing.
@@ -21,7 +21,7 @@ u.PostMessageW.restype = ctypes.c_bool
 
 WM_CHAR, WM_KEYDOWN, WM_SYSKEYDOWN, WM_CLOSE = 0x0102, 0x0100, 0x0104, 0x0010
 VK_BACK = 0x08
-exe = pathlib.Path("mycastreceiver032.exe").resolve()
+exe = pathlib.Path("mycastreceiver033.exe").resolve()
 jpeg = pathlib.Path(sys.argv[1]).read_bytes()
 
 def ack(sock, payload):
@@ -50,29 +50,75 @@ try:
         assert ack(sock, struct.pack("!I", len(jpeg)) + jpeg) == bytes(17)
         time.sleep(.5)  # decoder makes linkConnected true after first valid frame
 
-        # Android is the only consent authority; Windows needs no Alt+R.
-        u.SendMessageW(hwnd, WM_CHAR, ord("a"), 0)
-        u.SendMessageW(hwnd, WM_CHAR, ord("日"), 0)
-        u.SendMessageW(hwnd, WM_KEYDOWN, VK_BACK, 0)
-
+        # Native edit holds a draft; no character leaks before explicit send.
+        u.GetDlgItem.argtypes = (ctypes.c_void_p, ctypes.c_int)
+        u.GetDlgItem.restype = ctypes.c_void_p
+        u.SetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+        u.GetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
+        u.IsWindowVisible.argtypes = (ctypes.c_void_p,)
+        edit = u.GetDlgItem(hwnd, 3301)
+        button = u.GetDlgItem(hwnd, 3302)
+        assert edit and button and u.IsWindowVisible(edit), "Missing native text composer"
+        u.SendMessageW(edit, WM_CHAR, ord("a"), 0)
+        u.SendMessageW(edit, WM_CHAR, ord("日"), 0)
+        assert ack(sock, struct.pack("!I", 0)) == bytes(17), "Draft leaked before send"
+        u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
         p = ack(sock, struct.pack("!I", 0))
-        assert p[0] == 8, p
-        assert p[1] == 4, p
-        assert p[2:6] == "a日".encode("utf-8"), p
-        k = ack(sock, struct.pack("!I", 0))
-        assert k[:2] == bytes([9, 1]), k
+        assert p[:6] == bytes([8, 4]) + "a日".encode("utf-8"), p
+        assert ack(sock, struct.pack("!I", 0)) == bytes(17)
+        draft = ctypes.create_unicode_buffer(260)
+        u.GetWindowTextW(edit, draft, len(draft))
+        assert not draft.value, "Sent draft was not cleared"
+
+        # Conversion-confirm Enter must not submit. Next Enter sends once.
+        u.SetWindowTextW(edit, "日本語")
+        u.SendMessageW(edit, 0x010d, 0, 0)  # WM_IME_STARTCOMPOSITION
+        u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
+        assert ack(sock, struct.pack("!I", 0)) == bytes(17), "Composition Enter sent text"
+        u.SendMessageW(edit, 0x010e, 0, 0)  # WM_IME_ENDCOMPOSITION
+        u.SendMessageW(edit, 0x0101, 0x0d, 0)  # release conversion Enter
+        u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
+        p = ack(sock, struct.pack("!I", 0))
+        assert p[0] == 8 and p[2:2+p[1]].decode("utf-8") == "日本語", p
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
 
-        # Physical UVC display is never a keyboard input target.
-        assert ack(sock, struct.pack("!I", 0xffffffff) + b"\x01") == bytes(17)
-        u.SendMessageW(hwnd, WM_CHAR, ord("b"), 0)
+        # Editing keys operate locally; Send button submits the edited draft.
+        u.SetWindowTextW(edit, "ab")
+        u.SendMessageW(edit, 0x00b1, 2, 2)  # EM_SETSEL
+        u.SendMessageW(edit, WM_CHAR, VK_BACK, 0)
+        u.SendMessageW(button, 0x00f5, 0, 0)  # BM_CLICK
+        p = ack(sock, struct.pack("!I", 0))
+        assert p[:3] == bytes([8, 1, ord("a")]), p
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
+
+        # A long Unicode draft crosses many packets, without splitting scalars.
+        message = "日" * 120 + "😀" * 20
+        u.SetWindowTextW(edit, message)
+        u.SendMessageW(button, 0x00f5, 0, 0)
+        received = ""
+        for _ in range(64):
+            p = ack(sock, struct.pack("!I", 0))
+            if p == bytes(17): break
+            assert p[0] == 8 and 0 < p[1] <= 15, p
+            received += p[2:2+p[1]].decode("utf-8")
+        assert received == message, (len(received), len(message))
+
+        # Physical UVC display never sends text and retains any unsent draft.
+        u.SetWindowTextW(edit, "保留")
+        assert ack(sock, struct.pack("!I", 0xffffffff) + b"\x01") == bytes(17)
+        time.sleep(.3)
+        u.SendMessageW(button, 0x00f5, 0, 0)
+        assert ack(sock, struct.pack("!I", 0)) == bytes(17)
+        u.GetWindowTextW(edit, draft, len(draft))
+        assert draft.value == "保留"
+        assert not u.IsWindowVisible(edit)
 
         assert ack(sock, struct.pack("!I", 0xffffffff) + b"\x02") == bytes(17)
-        u.SendMessageW(hwnd, WM_CHAR, ord("c"), 0)
-        packet = ack(sock, struct.pack("!I", 0))
-        assert packet[:3] == bytes([8, 1, ord("c")]), packet
-    print("V032 NATIVE UTF8 KEYBOARD / SAFE-OFF / UVC ISOLATION PASS")
+        time.sleep(.3)
+        u.SendMessageW(button, 0x00f5, 0, 0)
+        p = ack(sock, struct.pack("!I", 0))
+        assert p[0] == 8 and p[2:2+p[1]].decode("utf-8") == "保留", p
+    print("V033 NATIVE COMPOSER / IME ENTER GUARD / UNICODE BATCH / UVC DRAFT RETENTION PASS")
 finally:
     if hwnd:
         u.PostMessageW(hwnd, WM_CLOSE, 0, 0)

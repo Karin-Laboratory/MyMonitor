@@ -92,8 +92,56 @@ static void clearPendingPinch(HWND hwnd) {
     pinchWheelRemainder = 0;
 }
 
+static HWND textInput = nullptr, sendButton = nullptr, inputHint = nullptr;
+static WNDPROC originalEditProc = nullptr;
+static bool inputBarVisible = false, composingText = false, compositionReturn = false;
+static constexpr int INPUT_EDIT_ID = 3301, INPUT_SEND_ID = 3302;
+static constexpr int INPUT_BAR_HEIGHT = 72;
+static RECT videoBounds(HWND hwnd) {
+    RECT bounds{}; GetClientRect(hwnd, &bounds);
+    if (inputBarVisible) bounds.bottom = (std::max)(0L, bounds.bottom - INPUT_BAR_HEIGHT);
+    return bounds;
+}
+static void layoutInputBar(HWND hwnd) {
+    RECT client{}; GetClientRect(hwnd, &client);
+    const bool show = linkConnected.load() && streamSource.load() == 2;
+    static LONG oldW = -1, oldH = -1;
+    const bool changed = inputBarVisible != show || oldW != client.right || oldH != client.bottom;
+    inputBarVisible = show;
+    if (!textInput || !changed) return;
+    oldW = client.right; oldH = client.bottom;
+    const int top = (std::max)(0L, client.bottom - INPUT_BAR_HEIGHT);
+    MoveWindow(inputHint, 10, top + 3, (std::max)(1L, client.right - 20), 22, TRUE);
+    MoveWindow(textInput, 10, top + 28, (std::max)(1L, client.right - 106), 32, TRUE);
+    MoveWindow(sendButton, (std::max)(0L, client.right - 86), top + 28, 76, 32, TRUE);
+    for (HWND child : {textInput, sendButton, inputHint}) ShowWindow(child, show ? SW_SHOW : SW_HIDE);
+}
+static bool sendInputText();
+static LRESULT CALLBACK inputEditProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
+    if (message == WM_GETDLGCODE) return DLGC_WANTALLKEYS;
+    if (message == WM_IME_STARTCOMPOSITION) composingText = true;
+    if (message == WM_IME_ENDCOMPOSITION) composingText = false;
+    if (message == WM_IME_KEYDOWN && w == VK_RETURN && composingText) compositionReturn = true;
+    if (message == WM_KEYUP && w == VK_RETURN) compositionReturn = false;
+    if (message == WM_KEYDOWN && w == VK_F11) {
+        SendMessageW(GetParent(hwnd), WM_KEYDOWN, w, l);
+        return 0;
+    }
+    if (message == WM_KEYDOWN && w == VK_RETURN) {
+        if (composingText || compositionReturn) {
+            compositionReturn = true;
+            return CallWindowProcW(originalEditProc, hwnd, message, w, l);
+        }
+        if (!(static_cast<unsigned long long>(l) & (1ULL << 30))) sendInputText();
+        return 0;
+    }
+    // TranslateMessage can generate this even when WM_KEYDOWN was consumed.
+    if (message == WM_CHAR && w == VK_RETURN) return 0;
+    return CallWindowProcW(originalEditProc, hwnd, message, w, l);
+}
+
 static bool normalized(HWND hwnd, POINT pt, uint16_t &nx, uint16_t &ny) {
-    RECT client{}; GetClientRect(hwnd,&client);
+    RECT client = videoBounds(hwnd);
     std::shared_ptr<DecodedFrame> frame;
     { std::lock_guard<std::mutex> guard(lockFrame); frame = picture; }
     if (!frame || frame->width == 0 || frame->height == 0) return false;
@@ -174,7 +222,50 @@ static void enqueueKeyboardKey(int id) {
     pkt[1] = static_cast<unsigned char>(id);
     controlQueue.push_back(pkt);
 }
-static wchar_t pendingHighSurrogate = 0;
+static bool sendInputText() {
+    if (!inputBarVisible || !linkConnected.load() || streamSource.load() != 2) return false;
+    HIMC imc = ImmGetContext(textInput);
+    const bool pendingComposition = imc && ImmGetCompositionStringW(imc, GCS_COMPSTR, nullptr, 0) > 0;
+    if (imc) ImmReleaseContext(textInput, imc);
+    if (composingText || pendingComposition) {
+        SetWindowTextW(inputHint, L"変換を確定してから送信してください");
+        SetFocus(textInput);
+        return false;
+    }
+    const int count = GetWindowTextLengthW(textInput);
+    if (count == 0) return false;
+    std::wstring text(count + 1, L'\0');
+    GetWindowTextW(textInput, text.data(), count + 1);
+    text.resize(count);
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), count, nullptr, 0, nullptr, nullptr);
+    if (size <= 0) return false;
+    std::string utf8(size, '\0');
+    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), count, utf8.data(), size, nullptr, nullptr);
+    std::vector<std::array<unsigned char,17>> packets;
+    for (size_t i = 0; i < utf8.size();) {
+        const unsigned char c = static_cast<unsigned char>(utf8[i]);
+        const size_t n = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+        if (packets.empty() || packets.back()[1] + n > 15) {
+            packets.push_back({}); packets.back()[0] = 8;
+        }
+        auto& packet = packets.back();
+        std::memcpy(packet.data() + 2 + packet[1], utf8.data() + i, n);
+        packet[1] += static_cast<unsigned char>(n); i += n;
+    }
+    {
+        std::lock_guard<std::mutex> guard(controlMutex);
+        // Enqueue the entire message or leave the draft intact. Never truncate.
+        if (controlQueue.size() + packets.size() > 64) {
+            SetWindowTextW(inputHint, L"送信待ちです。少し待って、もう一度送信してください");
+            return false;
+        }
+        controlQueue.insert(controlQueue.end(), packets.begin(), packets.end());
+    }
+    SetWindowTextW(textInput, L"");
+    SetWindowTextW(inputHint, L"入力・変換 → Enterで送信（Android側で入力欄を選び、遠隔操作を許可してください）");
+    SetFocus(textInput);
+    return true;
+}
 
 // One pinch gesture covers all wheel detents accumulated during 160ms.
 // Derive the stroke from the displayed image rectangle, not fixed pixels:
@@ -184,17 +275,17 @@ static void flushPinchWheel(HWND hwnd) {
     pinchPendingDetents = 0;
     if (!detents || !remoteControlEnabled.load() || !linkConnected.load() ||
         streamSource.load() == 1) return;
-    RECT client{}; GetClientRect(hwnd, &client);
+    RECT client = videoBounds(hwnd);
     std::shared_ptr<DecodedFrame> frame;
     { std::lock_guard<std::mutex> guard(lockFrame); frame = picture; }
     if (!frame || !frame->width || !frame->height ||
         client.right <= 0 || client.bottom <= 0) return;
     const double fit = (std::min)(double(client.right) / frame->width,
-                                   double(client.bottom) / frame->height);
+                                   double(videoBounds(hwnd).bottom) / frame->height);
     const int width = int(frame->width * fit), height = int(frame->height * fit);
     const int span = (std::min)(width, height);
     if (span < 40) return;
-    const int left = (client.right - width) / 2, top = (client.bottom - height) / 2;
+    const int left = (client.right - width) / 2, top = (videoBounds(hwnd).bottom - height) / 2;
     const int startRadius = (std::max)(4, int(span * 0.19));
     const int strength = (std::min)(6, abs(detents));
     const double scale = std::pow(1.52, strength);
@@ -542,6 +633,24 @@ static void resizeForUvc(HWND hwnd) {
 
 static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
     switch (message) {
+    case WM_CREATE: {
+        const HINSTANCE instance = reinterpret_cast<LPCREATESTRUCT>(l)->hInstance;
+        inputHint = CreateWindowW(L"STATIC", L"入力・変換 → Enterで送信（Android側で入力欄を選び、遠隔操作を許可してください）",
+            WS_CHILD | SS_LEFT, 0,0,0,0, hwnd, nullptr, instance, nullptr);
+        textInput = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
+            0,0,0,0, hwnd, reinterpret_cast<HMENU>(INPUT_EDIT_ID), instance, nullptr);
+        sendButton = CreateWindowW(L"BUTTON", L"送信", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+            0,0,0,0, hwnd, reinterpret_cast<HMENU>(INPUT_SEND_ID), instance, nullptr);
+        if (!inputHint || !textInput || !sendButton) return -1;
+        for (HWND child : {inputHint, textInput, sendButton})
+            SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+        SendMessageW(textInput, EM_SETLIMITTEXT, 240, 0);
+        originalEditProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(textInput, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(inputEditProc)));
+        return 0;
+    }
+    case WM_COMMAND:
+        if (LOWORD(w) == INPUT_SEND_ID && HIWORD(w) == BN_CLICKED) { sendInputText(); return 0; }
+        break;
     case WM_SOURCE_MODE:
         if (w == 1) clearPendingPinch(hwnd);
         // Ignore metadata queued by an already-disconnected TCP session.
@@ -574,33 +683,16 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             if (key) { enqueueKeyboardKey(key); return 0; }
         }
         break;
-    case WM_CHAR: {
-        // WM_CHAR delivers UTF-16 committed IME output, not composition
-        // keystrokes. Buffer surrogate pairs before UTF-8 encoding.
-        const std::uint32_t unit = static_cast<std::uint32_t>(w);
-        if (unit >= 0xd800 && unit <= 0xdbff) {
-            pendingHighSurrogate = static_cast<wchar_t>(unit);
-            return 0;
-        }
-        if (unit >= 0xdc00 && unit <= 0xdfff) {
-            if (pendingHighSurrogate) {
-                const std::uint32_t cp = 0x10000u +
-                    ((static_cast<std::uint32_t>(pendingHighSurrogate) - 0xd800u) << 10) +
-                    (unit - 0xdc00u);
-                pendingHighSurrogate = 0;
-                enqueueKeyboardCodepoint(cp);
-            }
-            return 0;
-        }
-        pendingHighSurrogate = 0;
-        if (unit >= 0x20 && unit != 0x7f) {
-            enqueueKeyboardCodepoint(unit);
+    case WM_CHAR:
+        if (inputBarVisible && w >= 0x20 && w != 0x7f) {
+            SetFocus(textInput);
+            SendMessageW(textInput, WM_CHAR, w, l);
             return 0;
         }
         break;
-    }
     case WM_APP: {
         refreshPosted.store(false);
+        layoutInputBar(hwnd);
         // Frequent frames should only invalidate; modifying the window title
         // and formatting diagnostics 30 times a second adds UI contention.
         static ULONGLONG lastTitleUpdate = 0;
@@ -609,13 +701,13 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             lastTitleUpdate = now;
             RECT client{};
             GetClientRect(hwnd, &client);
-            std::wstring title = L"My Cast Receiver 032 | ";
+            std::wstring title = L"My Cast Receiver 033 | ";
             title += linkConnected.load() ? L"Android接続中" : L"Android未接続・接続待機中";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
                 if (picture && linkConnected.load()) {
                     title += L" | 映像 " + std::to_wstring(picture->width) + L" x " + std::to_wstring(picture->height);
-                    const double scale = (std::min)(double(client.right)/picture->width, double(client.bottom)/picture->height);
+                    const double scale = (std::min)(double(client.right)/picture->width, double(videoBounds(hwnd).bottom)/picture->height);
                     title += L" | 表示 " + std::to_wstring(int(picture->width * scale)) + L" x " + std::to_wstring(int(picture->height * scale));
                 }
             }
@@ -626,27 +718,6 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
-    }
-    case WM_IME_STARTCOMPOSITION:
-    case WM_IME_COMPOSITION: {
-        // Anchor both composition and candidates near the last clicked input.
-        RECT client; GetClientRect(hwnd, &client);
-        POINT anchor = dragStart;
-        anchor.x = (std::max)(12L, (std::min)(anchor.x, client.right - 240));
-        anchor.y = (std::max)(12L, (std::min)(anchor.y + 28, client.bottom - 160));
-        HIMC imc = ImmGetContext(hwnd);
-        if (imc) {
-            COMPOSITIONFORM composition{};
-            composition.dwStyle = CFS_POINT;
-            composition.ptCurrentPos = anchor;
-            ImmSetCompositionWindow(imc, &composition);
-            CANDIDATEFORM candidate{};
-            candidate.dwStyle = CFS_CANDIDATEPOS;
-            candidate.ptCurrentPos = anchor;
-            ImmSetCandidateWindow(imc, &candidate);
-            ImmReleaseContext(hwnd, imc);
-        }
-        break;
     }
     case WM_LBUTTONDOWN:
         if (remoteControlEnabled.load() && GetTickCount64()-lastTouchMs > 700) {
@@ -672,6 +743,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             // suppress releasing Windows mouse capture.
             mouseDragging=false;
             ReleaseCapture();
+            if (inputBarVisible) SetFocus(textInput);
         }
         return 0;
     case WM_XBUTTONUP: {
@@ -757,7 +829,12 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(hwnd, &ps);
         RECT bounds{};
-        GetClientRect(hwnd, &bounds);
+        if (inputBarVisible) {
+            RECT panel{}; GetClientRect(hwnd, &panel);
+            panel.top = (std::max)(0L, panel.bottom - INPUT_BAR_HEIGHT);
+            FillRect(dc, &panel, GetSysColorBrush(COLOR_BTNFACE));
+        }
+        bounds = videoBounds(hwnd);
         const int clientW = bounds.right, clientH = bounds.bottom;
         std::shared_ptr<DecodedFrame> frame;
         {
@@ -826,7 +903,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         }
         if (w == 15) queueRefresh(); // periodic diagnostics and disconnected UI
         return 0;
-    case WM_SIZE: SendMessageW(hwnd, WM_APP, 1, 0); InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    case WM_SIZE: layoutInputBar(hwnd); SendMessageW(hwnd, WM_APP, 1, 0); InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case WM_CLOSE: clearPendingPinch(hwnd); KillTimer(hwnd, 15); DestroyWindow(hwnd); return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
@@ -850,7 +927,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     // User resizing remains possible for smaller screens.
     RECT videoRect{0, 0, 1920, 1080};
     AdjustWindowRectEx(&videoRect, WS_OVERLAPPEDWINDOW, FALSE, 0);
-    windowHandle = CreateWindow(wc.lpszClassName, L"My Cast Receiver", WS_OVERLAPPEDWINDOW,
+    windowHandle = CreateWindow(wc.lpszClassName, L"My Cast Receiver", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         0, 0, videoRect.right-videoRect.left, videoRect.bottom-videoRect.top,
         nullptr, nullptr, instance, nullptr);
     if (!windowHandle) { closesocket(listener); GdiplusShutdown(token); WSACleanup(); return 1; }
