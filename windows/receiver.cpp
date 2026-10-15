@@ -143,13 +143,13 @@ static void flushPinchWheel(HWND hwnd) {
     const int strength = (std::min)(6, abs(detents));
     const double scale = std::pow(1.52, strength);
     const int endRadius = (std::max)(int(span * 0.045), (std::min)(
-        int(span * 0.42), int(startRadius * (detents > 0 ? (1.0 / scale) : scale))));
+        int(span * 0.42), int(startRadius * (detents < 0 ? (1.0 / scale) : scale))));
     const int safeRadius = (std::max)(startRadius, endRadius) + 2;
     const int midX = (std::clamp)(static_cast<int>(pinchAnchor.x), left + safeRadius, left + width - safeRadius - 1);
     const int midY = (std::clamp)(static_cast<int>(pinchAnchor.y), top + 1, top + height - 2);
     POINT a{midX-startRadius, midY}, b{midX-endRadius, midY};
     POINT c{midX+startRadius, midY}, d{midX+endRadius, midY};
-    // DOWN (negative detents) moves fingers OUT and zooms IN.
+    // UP (positive detents) moves fingers OUT and zooms IN; DOWN moves IN and zooms OUT.
     enqueueControl(hwnd, 4, a, b, c, d);
 }
 
@@ -509,7 +509,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         const ULONGLONG now = GetTickCount64();
         if (now - lastTitleUpdate >= 1000) {
             lastTitleUpdate = now;
-            std::wstring title = L"My Cast Receiver 029";
+            std::wstring title = L"My Cast Receiver 030";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
                 if (picture) title += L" - " + std::to_wstring(picture->width) +
@@ -699,7 +699,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                 FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, RGB(210,210,210));
-                const wchar_t* text = L"My Cast Receiver 029\nWaiting on TCP 57007\n\n"
+                const wchar_t* text = L"My Cast Receiver 030\nWaiting on TCP 57007\n\n"
                     L"Android: auto discovery or IPv4 + port 57007\n"
                     L"OBS: Window Capture -> My Cast Receiver\nFull HD / Screen + audio / UVC";
                 DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_WORDBREAK);
