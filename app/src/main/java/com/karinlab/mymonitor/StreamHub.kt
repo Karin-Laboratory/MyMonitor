@@ -85,7 +85,7 @@ object StreamHub {
         uvcReady = value
         controlArmed = false
         sender.discardPending()
-        statusSink?.invoke(if (value) "UVC映像に自動切替" else
+        statusSink?.invoke(if (value) "USBカメラの映像に切り替えました" else
             if (projectionReady) "スマホ画面へ自動復帰" else "UVC切断。スマホ画面の共有許可が必要")
         reconcileAsync()
     }
@@ -104,7 +104,7 @@ object StreamHub {
         selectedPort = port
         if (remember) app.getSharedPreferences("monitor", Context.MODE_PRIVATE).edit()
             .putString("windowsHost", host).putInt("windowsPort", port).apply()
-        if (changed) statusSink?.invoke("受信機を確認済み: " + host +
+        if (changed) statusSink?.invoke("Windowsアプリが見つかりました: " + host +
             if (source() == CapturePolicy.Source.AWAITING_SCREEN_PERMISSION) " (画面許可待ち)" else " (映像入力待ち)")
         reconcileAsync()
     }
@@ -118,7 +118,7 @@ object StreamHub {
         executor.execute {
             val verified = ReceiverDiscovery.probe(host, port)
             if (verified && enabled) selectVerified(host, port, true)
-            else statusSink?.invoke("受信機の応答がありません: $host:$port")
+            else statusSink?.invoke("Windowsアプリに接続できません: $host:$port")
             callback(verified && enabled)
         }
     }

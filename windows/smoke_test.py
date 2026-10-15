@@ -7,13 +7,16 @@ import sys
 import time
 from pathlib import Path
 u = ctypes.WinDLL('user32', use_last_error=True)
+u.GetPropW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+u.GetPropW.restype = ctypes.c_size_t
+
 u.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
 u.FindWindowW.restype = ctypes.c_void_p
 u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
 u.SendMessageW.restype = ctypes.c_ssize_t
 u.PostMessageW.argtypes = u.SendMessageW.argtypes
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-process = subprocess.Popen([str(Path('mycastreceiver030.exe').resolve())])
+process = subprocess.Popen([str(Path('mycastreceiver031.exe').resolve())])
 try:
     deadline = time.monotonic() + 15
     hwnd = None
@@ -59,9 +62,18 @@ try:
         title = ctypes.create_unicode_buffer(256)
         for _ in range(30):
             u.GetWindowTextW(hwnd, title, 256)
-            if '1920 x 1080' in title.value: break
+            if '映像 1920 x 1080' in title.value: break
             time.sleep(.1)
-        assert '1920 x 1080' in title.value, title.value
+        assert '映像 1920 x 1080' in title.value, title.value
+        # Live display/client sizes must follow an actual window resize immediately.
+        u.MoveWindow.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_bool)
+        u.MoveWindow(hwnd, 0, 0, 900, 700, True)
+        bounds = (ctypes.c_long * 4)()
+        u.GetClientRect(hwnd, ctypes.byref(bounds))
+        u.GetWindowTextW(hwnd, title, 256)
+        assert f"ウィンドウ {bounds[2]} x {bounds[3]}" in title.value, title.value
+        scale = min(bounds[2]/1920, bounds[3]/1080)
+        assert f"表示 {int(1920*scale)} x {int(1080*scale)}" in title.value, title.value
         print(f'Full HD ACK: mean={sum(times)/len(times):.1f}ms max={max(times):.1f}ms (loopback; not Wi-Fi latency)')
         # One corrupt MJPEG frame must be ACKed/skipped, not destroy the stream.
         bad = b'broken-JPEG-no-SOI'
@@ -72,9 +84,9 @@ try:
         # could correctly replace it in the one-slot latest-frame queue.
         for _ in range(40):
             u.GetWindowTextW(hwnd, title, 256)
-            if 'skipped 1 bad frames' in title.value: break
+            if u.GetPropW(hwnd, "MyCastRejectedFrames") == 1: break
             time.sleep(.1)
-        assert 'skipped 1 bad frames' in title.value, title.value
+        assert u.GetPropW(hwnd, "MyCastRejectedFrames") == 1, title.value
         s.sendall(packet)
         assert s.recv(1) == b'\x06', 'Good frame not accepted after corrupt JPEG'
         print('Corrupt MJPEG skipped with ACK, next valid frame accepted: PASS')
@@ -90,23 +102,23 @@ try:
             assert s.recv(1) == b'\x06', 'Heartbeat failed'
         title = ctypes.create_unicode_buffer(256)
         u.GetWindowTextW(hwnd, title, 256)
-        assert 'reconnecting' not in title.value and '1920 x 1080' in title.value, title.value
+        assert 'Android未接続' not in title.value and '映像 1920 x 1080' in title.value, title.value
     print('7-second static-screen idle / heartbeat / no blank frame: PASS')
     # Sender vanished: retain LAST good frame and signal link loss.
     for _ in range(30):
         u.GetWindowTextW(hwnd, title, 256)
-        if 'reconnecting' in title.value: break
+        if 'Android未接続' in title.value: break
         time.sleep(.1)
-    assert 'reconnecting' in title.value and '1920 x 1080' in title.value, title.value
+    assert 'Android未接続' in title.value, title.value
     print('Connection loss preserves last Full HD image metadata: PASS')
     with socket.create_connection(('127.0.0.1', 57007), timeout=3) as s:
         s.sendall(b'MMC9' + packet)
         assert s.recv(1) == b'\x06', 'Reconnect failed'
         for _ in range(50):
             u.GetWindowTextW(hwnd, title, 256)
-            if 'reconnecting' not in title.value: break
+            if 'Android未接続' not in title.value: break
             time.sleep(.1)
-        assert 'reconnecting' not in title.value, title.value
+        assert 'Android未接続' not in title.value, title.value
     with socket.create_connection(('127.0.0.1', 57007), timeout=3) as s:
         s.sendall(b'MMC9' + struct.pack('!I', 9*1024*1024))
         try: assert s.recv(1) == b'', 'Oversized frame accepted'

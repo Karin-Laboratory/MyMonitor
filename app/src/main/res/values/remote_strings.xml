@@ -1,1 +1,1 @@
-<resources><string name="remote_service_description">MyMonitorがスマホ画面をWindowsへ共有している間だけ、ユーザーが有効化した遠隔タップ・スワイプ・ピンチ操作を実行します。</string></resources>
+<resources><string name="remote_service_description">MyMonitorがスマホ画面をWindowsへ共有している間だけ、ユーザーが有効化した遠隔タップ・スワイプ・ピンチと、選択された通常の文字入力欄へのキーボード操作を実行します。入力内容の取得・変更は画面共有中の明示的な遠隔操作許可がある場合に限ります。</string></resources>

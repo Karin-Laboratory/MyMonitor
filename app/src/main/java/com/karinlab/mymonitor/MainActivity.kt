@@ -26,6 +26,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -93,6 +94,11 @@ class MainActivity : AppCompatActivity() {
     private var controlsVisible = true
     @Volatile private var discoveringWindows = false
     private lateinit var controls: LinearLayout
+    private lateinit var setupOverlay: ScrollView
+    private lateinit var setupStatus: TextView
+    private lateinit var setupRemoteButton: Button
+    private lateinit var setupReturnButton: Button
+    private var settingsRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -108,6 +114,70 @@ class MainActivity : AppCompatActivity() {
 
         state = TextView(this).apply { setTextColor(Color.WHITE); setBackgroundColor(0x88000000.toInt()); text = "USBカメラを接続してください"; setPadding(16, 8, 16, 8); textSize = 14f }
         root.addView(state, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
+
+        // Without a real USB camera there is no preview to paint. The previous
+        // launcher re-entry showed an empty black monitor; present usable
+        // connection/settings controls instead. This never replaces the UVC view.
+        val dp = resources.displayMetrics.density
+        val setup = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((24 * dp).toInt(), (54 * dp).toInt(),
+                (24 * dp).toInt(), (110 * dp).toInt())
+        }
+        val heading = TextView(this).apply {
+            text = "MyMonitor"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+        setup.addView(heading, LinearLayout.LayoutParams(-1, -2))
+        setupStatus = TextView(this).apply {
+            textSize = 15f
+            setTextColor(0xffd8e5f5.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, (18 * dp).toInt(), 0, (20 * dp).toInt())
+        }
+        setup.addView(setupStatus, LinearLayout.LayoutParams(-1, -2))
+        fun setupAction(label: String, click: () -> Unit): Button = Button(this).apply {
+            text = label
+            isAllCaps = false
+            textSize = 15f
+            setOnClickListener { click() }
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
+                topMargin = (8 * dp).toInt()
+            }
+        }
+        setup.addView(setupAction("📺 Windowsアプリを探す") { discoverWindows() })
+        setup.addView(setupAction("📱 Android画面をWindowsに映す") {
+            if (StreamHub.selectedHost == null) discoverWindows()
+            else beginScreenConsent()
+        })
+        setupRemoteButton = setupAction("🔒 遠隔操作を許可") { toggleRemoteControlPermission() }
+        setup.addView(setupRemoteButton)
+        setup.addView(setupAction("⚙ Windows接続先を手動設定") { windowsSettings() })
+        setupReturnButton = setupAction("← Android画面へ戻る") {
+            if (StreamHub.uvcReady) {
+                settingsRequested = false
+                refreshPresentation()
+            } else moveTaskToBack(true)
+        }
+        setup.addView(setupReturnButton)
+        setup.addView(setupAction("MyMonitorを終了") {
+            startService(Intent(this, ScreenStreamService::class.java).apply {
+                action = ScreenStreamService.ACTION_EXIT
+            })
+        }.apply {
+            setTextColor(Color.WHITE)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xffb3261e.toInt())
+            (layoutParams as LinearLayout.LayoutParams).topMargin = (28 * dp).toInt()
+        })
+        setupOverlay = ScrollView(this).apply {
+            setBackgroundColor(0xff121b29.toInt())
+            setFillViewport(true)
+            addView(setup)
+        }
+        root.addView(setupOverlay, FrameLayout.LayoutParams(-1, -1))
 
         controls = LinearLayout(this).apply {
             gravity = Gravity.CENTER
@@ -137,20 +207,10 @@ class MainActivity : AppCompatActivity() {
         controls.addView(smb)
         controls.addView(scan)
         controls.addView(button("Windowsへ転送") { discoverWindows() })
-        controls.addView(button("遠隔操作") {
-            if (!RemoteControlService.active()) {
-                showStatus("設定のユーザー補助でMyMonitorの遠隔操作を有効にしてください")
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            } else if (StreamHub.source() != CapturePolicy.Source.SCREEN ||
-                !ScreenStreamService.projectionActive) {
-                StreamHub.disarmControl()
-                showStatus("スマホ画面をWindowsへ転送中のみ遠隔操作できます")
-            } else {
-                StreamHub.setControlArmed(!StreamHub.controlArmed)
-                showStatus(if (StreamHub.controlArmed) "遠隔操作の許可ON（WindowsでAlt+R）" else "遠隔操作の許可OFF")
-            }
-        })
+        controls.addView(button("遠隔操作") { toggleRemoteControlPermission() })
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        state.bringToFront()
+        refreshPresentation()
         // Reserve real room for the bottom toolbar rather than letting its
         // rotated/higher landscape layout cover the HDMI video viewport.
         controls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateVideoViewport() }
@@ -175,6 +235,7 @@ class MainActivity : AppCompatActivity() {
             val count = StreamHub.scanAndConnect()
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
+                refreshPresentation()
                 if (StreamHub.selectedHost != null && !hasUvcDevice() &&
                     !ScreenStreamService.projectionActive) beginScreenConsent()
                 else if (count > 1 && StreamHub.selectedHost == null &&
@@ -197,6 +258,55 @@ class MainActivity : AppCompatActivity() {
             controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
             updateVideoViewport()
         }
+    }
+
+    /** Keep the physical UVC path untouched. No camera means settings, not black. */
+    private fun refreshPresentation() {
+        if (!::setupOverlay.isInitialized) return
+        val uvcReady = StreamHub.uvcReady
+        val showSettings = settingsRequested || !uvcReady
+        setupOverlay.visibility = if (showSettings) View.VISIBLE else View.GONE
+        if (!showSettings) return
+        val receiver = StreamHub.selectedHost?.let { "接続先: $it" }
+            ?: "Windows: 未接続（Windowsアプリを起動してください）"
+        val projection = if (ScreenStreamService.projectionActive) {
+            if (StreamHub.sender.isConnected()) "Android画面: Windowsへ転送中"
+            else "Android画面: Windowsへの接続待ち"
+        } else "Android画面: 転送するには画面共有を許可してください"
+        val remote = when {
+            !RemoteControlService.active() -> "未設定（ユーザー補助の許可が必要）"
+            StreamHub.controlArmed -> "Windowsから操作できます"
+            else -> "停止中"
+        }
+        val usb = when {
+            uvcReady -> "USBカメラ: 映像を表示中"
+            hasUvcDevice() -> "USBカメラ: 映像を準備中"
+            else -> "USBカメラ: 未接続"
+        }
+        setupStatus.text = "$usb\n$receiver\n$projection\n遠隔操作: $remote"
+        setupReturnButton.text = if (uvcReady) "← UVCモニターへ戻る"
+            else "← Android画面へ戻る"
+        setupRemoteButton.text = when {
+            !RemoteControlService.active() -> "🔒 遠隔操作の権限を設定"
+            StreamHub.controlArmed -> "🔓 遠隔操作を停止"
+            else -> "🔒 遠隔操作を許可"
+        }
+    }
+
+    private fun toggleRemoteControlPermission() {
+        if (!RemoteControlService.active()) {
+            showStatus("ユーザー補助でMyMonitorの遠隔操作を許可してください")
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } else if (StreamHub.source() != CapturePolicy.Source.SCREEN ||
+            !ScreenStreamService.projectionActive) {
+            StreamHub.disarmControl()
+            showStatus("Android画面をWindowsへ転送中のみ遠隔操作できます")
+        } else {
+            StreamHub.setControlArmed(!StreamHub.controlArmed)
+            showStatus(if (StreamHub.controlArmed)
+                "Windowsからの遠隔操作を許可しました" else "Windowsからの遠隔操作を停止しました")
+        }
+        refreshPresentation()
     }
 
     private fun updateVideoViewport() {
@@ -293,13 +403,16 @@ class MainActivity : AppCompatActivity() {
             startActivityForResult(request, 490)
         } catch (e: Exception) {
             requestingProjection = false
-            showStatus("画面共有の許可画面を開けません: " + e.message)
+            showStatus("Androidの画面共有を開始できませんでした: " + e.message)
         }
     }
 
     override fun onNewIntent(next: Intent) {
         super.onNewIntent(next)
         setIntent(next)
+        if (next.action == Intent.ACTION_MAIN) settingsRequested = true
+        if (next.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) settingsRequested = false
+        refreshPresentation()
         when (next.action) {
             "com.karinlab.mymonitor.GRANT_SCREEN" -> {
                 screenConsentDeclined = false
@@ -318,6 +431,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun onUvcReady() {
+        // A newly opened camera takes priority; it must never be obscured by
+        // settings left over from a previous launcher re-entry.
+        settingsRequested = false
+        refreshPresentation()
         wasUvcEverReady = true
         notifyServiceSource()
         if (ScreenStreamService.screenRecording) {
@@ -344,6 +461,7 @@ class MainActivity : AppCompatActivity() {
      * Debounced, because Android may deliver both USB broadcasts for one event.
      */
     fun onUvcGone(wasRecording: Boolean = false) {
+        refreshPresentation()
         if (wasRecording) resumeRecordingOnScreen = true
         if (hasUvcDevice()) return
         usbReturnTask?.let { messageHandler.removeCallbacks(it) }
@@ -353,7 +471,7 @@ class MainActivity : AppCompatActivity() {
             wasUvcEverReady = false
             notifyServiceSource()
             if (ScreenStreamService.projectionActive) {
-                showStatus("UVCを取り外しました。スマホ画面へ復帰")
+                showStatus("USBカメラを外したため、Android画面の転送に戻ります")
                 if (resumeRecordingOnScreen) {
                     resumeRecordingOnScreen = false
                     startService(Intent(this, ScreenStreamService::class.java).apply {
@@ -386,6 +504,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshPresentation()
         if (::state.isInitialized)
             messageHandler.postDelayed({ promptBatteryOptimizationOnce() }, 1200)
         if (::monitor.isInitialized && ::video.isInitialized && !hasUvcDevice())
@@ -415,7 +534,7 @@ class MainActivity : AppCompatActivity() {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 mountCamera()
                 scanUsbDevices()
-            } else showStatus("UVCカメラ権限が拒否されました")
+            } else showStatus("USBカメラを使うにはカメラの許可が必要です")
         }
         if (requestCode == 102) {
             // Screen capture still works without audio, but playback capture needs RECORD_AUDIO.
@@ -482,6 +601,7 @@ class MainActivity : AppCompatActivity() {
 
     fun showStatus(message: String) {
         runOnUiThread {
+            refreshPresentation()
             expireMessage?.let { messageHandler.removeCallbacks(it) }
             expireMessage = null
             if (recordingActive && message == "● 録画中") {
@@ -567,23 +687,24 @@ class MainActivity : AppCompatActivity() {
     private fun discoverWindows() {
         if (discoveringWindows) return
         discoveringWindows = true
-        showStatus("LAN内のMy Cast Receiverを検索中…")
+        showStatus("同じネットワークのWindowsアプリを探しています…")
         receiverChooserShown = true
         Thread({
             val results = try { StreamHub.scanAll() } catch (_: Exception) { emptyList() }
             runOnUiThread {
                 discoveringWindows = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
+                refreshPresentation()
                 when (results.size) {
                     0 -> {
-                        showStatus("検証できるWindows受信機がありません。EXEを起動するかIPを入力")
+                        showStatus("Windowsアプリが見つかりません。同じWi-FiでMy Cast Receiverを起動してください")
                         windowsSettings()
                     }
                     1 -> {
                         val receiver = results.single()
                         StreamHub.enable()
                         StreamHub.connectVerified(receiver)
-                        showStatus("受信機を二重確認済み: " + receiver.name + " (" + receiver.host + ")")
+                        showStatus("Windowsアプリが見つかりました: " + receiver.name + " (" + receiver.host + ")")
                         if (!hasUvcDevice() && !ScreenStreamService.projectionActive) beginScreenConsent()
                     }
                     else -> {
@@ -619,13 +740,13 @@ class MainActivity : AppCompatActivity() {
                 if (host.isEmpty() || number == null || number !in 1..65535)
                     showStatus("接続先とポートを確認してください")
                 else {
-                    showStatus("受信機を確認中: " + host)
+                    showStatus("Windowsアプリへの接続を確認しています: " + host)
                     StreamHub.enable()
                     StreamHub.connectManual(host, number) { verified ->
                         runOnUiThread {
                             if (isFinishing || isDestroyed) return@runOnUiThread
                             if (verified) {
-                                showStatus("受信機の実在を確認: " + host)
+                                showStatus("Windowsアプリが見つかりました: " + host)
                                 if (!hasUvcDevice() && !ScreenStreamService.projectionActive) beginScreenConsent()
                             } else showStatus("接続不可: " + host + " は My Cast Receiver と応答しません")
                         }

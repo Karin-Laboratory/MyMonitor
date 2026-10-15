@@ -74,7 +74,7 @@ assert "PowerManager.PARTIAL_WAKE_LOCK" in service
 assert "refreshPowerLock()" in service
 assert "onTaskRemoved(" in service
 assert "onTrimMemory(" in service
-assert 'versionCode 30' in file("app/build.gradle")
+assert 'versionCode 31' in file("app/build.gradle")
 print("V017 POWER/LIFECYCLE CONTRACTS RETAINED (v018 preview supersedes ratio check)")
 
 # v018: the UVC image-size decision belongs to the parent viewport exactly once.
@@ -88,7 +88,7 @@ assert "camera?.setRenderSize(" not in fragment
 assert "PreviewGeometry.centered(" in fragment
 assert "fun centered(" in preview_geometry
 assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
-assert "versionCode 30" in file("app/build.gradle")
+assert "versionCode 31" in file("app/build.gradle")
 print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
 
 # v019 audio lifecycle and Windows binary provenance.
@@ -106,7 +106,7 @@ assert 'playbackAudioAllowed' in hub
 assert "waveOutReset(device)" in file("windows/audio_receiver.h")
 assert "VERSIONINFO" in file("windows/receiver.rc")
 assert "msvc" in file(".github/workflows/build-apk.yml").lower()
-assert 'versionCode 30' in file("app/build.gradle")
+assert 'versionCode 31' in file("app/build.gradle")
 print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")
 assert "private var opening = false" in fragment
 assert "if (opening || closing || camera != null || !physicalPresent(device)) return" in fragment
@@ -140,7 +140,7 @@ assert "reconcilePhysicalUsb()" in activity and "usbReconcileTask" in activity
 assert "staleCallbacksMustNotChangeNewMonitorState" in tests
 assert "spuriousDisconnectMustNotDestroyActiveCamera" in tests
 assert "nativeFailureRetriesAreBounded" in tests
-assert "versionName '0.30'" in file("app/build.gradle")
+assert "versionName '0.31'" in file("app/build.gradle")
 assert "retryDelayMs(" in policy
 assert "MyCastReceiver.exe" not in file(".github/workflows/build-apk.yml")
 print("V023 RC USB EVENT EPOCH / TIMEOUT / RELEASE CONTRACT PASS")
@@ -175,7 +175,7 @@ assert "var sessionWasConnected = false" in sender
 assert "\n                    var connected = false" not in sender
 assert "connected = true" in sender
 # Remote input must not replay after disabling, and pointer capture must end.
-assert "const bool enabledNow = !remoteControlEnabled.load();" in receiver
+assert "const bool enabledNow = !remoteControlEnabled.load();" not in receiver
 assert "if (mouseDragging) {" in receiver
 assert "ReleaseCapture();" in receiver
 print("SAFETY AUDIT: rotation lifecycle, connection status, remote cancellation PASS")
@@ -191,7 +191,7 @@ assert 'w == VK_F11' in receiver
 assert 'enterFullscreen(hwnd)' in receiver and 'exitFullscreen(hwnd)' in receiver
 assert 'SetWindowPlacement(hwnd, &windowedPlacement)' in receiver
 assert 'pinchPendingDetents' in receiver and 'flushPinchWheel(hwnd)' in receiver
-assert 'remoteControlEnabled.store(false)' in receiver
+assert 'remoteControlEnabled{true}' in receiver
 print("V028 MODE-AWARE UVC, FULLSCREEN AND PINCH DIRECTION CONTRACT PASS")
 
 # v029: wheel batching + Android Accessibility callback completion.
@@ -213,3 +213,32 @@ wheel_test = file("windows/wheel_test.py")
 assert 'Wheel DOWN first finger did not move right' in wheel_test
 assert 'Wheel UP first finger did not move left' in wheel_test
 print("V030 CTRL-WHEEL UP=ZOOM IN, DOWN=ZOOM OUT CONTRACT PASS")
+
+# v031 UI: a launcher re-entry without physical UVC has a real, interactive
+# settings surface. Neither source arbitration nor the stable gesture queue
+# may be replaced by this presentation-only change.
+assert 'private lateinit var setupOverlay: ScrollView' in activity
+assert 'private fun refreshPresentation()' in activity
+assert 'setupOverlay.visibility = if (showSettings) View.VISIBLE else View.GONE' in activity
+assert 'if (next.action == Intent.ACTION_MAIN) settingsRequested = true' in activity
+assert 'USBカメラ: 映像を準備中' in activity
+assert 'setup.addView(setupAction("📺 Windowsアプリを探す")' in activity
+assert 'setup.addView(setupAction("📱 Android画面をWindowsに映す")' in activity
+assert 'setupRemoteButton = setupAction(' in activity
+assert 'override fun onNewIntent(' in activity
+assert 'android:launchMode="singleTop"' in manifest
+print("V031 PRESENTATION: actionable no-UVC settings with Activity reuse PASS")
+
+# v031 keyboard uses previously reserved MMC6 reverse ACK opcodes while
+# retaining all v025/v029 controls and per-session Android authorization.
+keyboard=file("app/src/main/java/com/karinlab/mymonitor/RemoteKeyboardPolicy.kt")
+remote=file("app/src/main/java/com/karinlab/mymonitor/RemoteControlService.kt")
+assert 'const val TEXT = 8' in keyboard and 'const val KEY = 9' in keyboard
+assert 'RemoteKeyboardPolicy.decodeText(packet)' in remote
+assert 'node.isPassword' in remote and 'node.isEditable' in remote
+assert 'StreamHub.controlArmed' in remote
+assert 'WM_CHAR' in receiver and 'enqueueKeyboardCodepoint' in receiver
+assert 'streamSource.load() != 2' in receiver
+assert 'if (inputArmed) 120L else 1500L' in sender
+assert 'keyboard_test.py' in file(".github/workflows/build-apk.yml")
+print("V031 UTF-8 KEYBOARD ACK FRAMING, SCREEN-ONLY AND SAFE-OFF CONTRACT PASS")

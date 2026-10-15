@@ -4,8 +4,11 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Handler
+import android.os.Bundle
+import android.os.Build
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.app.KeyguardManager
 import android.content.Context
 import android.util.Log
@@ -46,7 +49,7 @@ class RemoteControlService : AccessibilityService() {
             val service = instance ?: return
             if (packet.size != 17 || !canControl(service)) return
             val op = packet[0].toInt() and 255
-            if (op !in 1..7) return
+            if (op !in 1..9) return
             main.post {
                 if (!canControl(service)) {
                     resetQueued()
@@ -74,6 +77,37 @@ class RemoteControlService : AccessibilityService() {
             }
         }
 
+        private fun dispatchKeyboard(service: RemoteControlService, packet: ByteArray) {
+            val node = service.rootInActiveWindow
+                ?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
+            // Never read and rewrite password contents or noneditable widgets.
+            if (!node.isEditable || node.isPassword) return
+            val op = packet[0].toInt() and 255
+            val key = packet[1].toInt() and 255
+            if (op == RemoteKeyboardPolicy.KEY && key == RemoteKeyboardPolicy.ENTER &&
+                !node.isMultiLine && Build.VERSION.SDK_INT >= 30 &&
+                node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) {
+                return
+            }
+            val text = if (op == RemoteKeyboardPolicy.TEXT)
+                RemoteKeyboardPolicy.decodeText(packet) ?: return else ""
+            val action = RemoteKeyboardPolicy.edit(node.text?.toString() ?: "",
+                node.textSelectionStart, node.textSelectionEnd,
+                if (op == RemoteKeyboardPolicy.TEXT) op else key, text) ?: return
+            if (action.replacement != null) {
+                val data = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        action.replacement)
+                }
+                if (!node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, data)) return
+            }
+            val cursor = Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, action.caret)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, action.caret)
+            }
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, cursor)
+        }
+
         private fun pump(service: RemoteControlService) {
             if (gestureRunning) return
             while (pending.isNotEmpty()) {
@@ -83,6 +117,10 @@ class RemoteControlService : AccessibilityService() {
                 }
                 val packet = pending.removeFirst()
                 val op = packet[0].toInt() and 255
+                if (op == RemoteKeyboardPolicy.TEXT || op == RemoteKeyboardPolicy.KEY) {
+                    dispatchKeyboard(service, packet)
+                    continue
+                }
                 if (op in 5..7) {
                     service.performGlobalAction(
                         if (op == 6) GLOBAL_ACTION_HOME else GLOBAL_ACTION_BACK

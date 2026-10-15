@@ -1,4 +1,4 @@
-"""v030 MMC6 source metadata and reversible F11 smoke test on native Windows EXE."""
+"""v031 MMC6 source metadata and reversible F11 smoke test on native Windows EXE."""
 import ctypes
 import pathlib
 import socket
@@ -6,7 +6,7 @@ import struct
 import subprocess
 import time
 
-exe = pathlib.Path("mycastreceiver030.exe").resolve()
+exe = pathlib.Path("mycastreceiver031.exe").resolve()
 assert exe.is_file(), exe
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 user32.FindWindowW.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
@@ -66,7 +66,7 @@ try:
         sock.sendall(struct.pack("!I", 0)) # still uses standard video heartbeat
         assert read_all(sock, 18) == bytes([6]) + bytes(17)
         assert process.poll() is None, "Windows receiver crashed after MMC6/F11"
-    print("V030 MMC6 SOURCE + F11 REVERSIBLE FULLSCREEN PASS")
+    print("V031 MMC6 SOURCE + F11 REVERSIBLE FULLSCREEN PASS")
 finally:
     if hwnd:
         user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)

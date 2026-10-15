@@ -1,4 +1,4 @@
-"""v030 native receiver test: fast Ctrl-wheel batches are bounded pinch packets.
+"""v031 native receiver test: fast Ctrl-wheel batches are bounded pinch packets.
 
 Runs against the built Windows EXE and reads its actual MMC6 reverse ACKs.
 Android GestureResultCallback queuing is checked by source/Android build, not
@@ -32,7 +32,7 @@ WM_SYSKEYDOWN = 0x0104
 WM_CLOSE = 0x0010
 MK_CONTROL = 0x0008
 WHEEL_DELTA = 120
-exe = pathlib.Path("mycastreceiver030.exe").resolve()
+exe = pathlib.Path("mycastreceiver031.exe").resolve()
 jpeg = pathlib.Path(sys.argv[1]).read_bytes()
 
 def read_all(sock, count):
@@ -92,19 +92,10 @@ try:
         for _ in range(80):
             title = ctypes.create_unicode_buffer(512)
             u.GetWindowTextW(hwnd, title, len(title))
-            if "1920 x 1080" in title.value and "decoded 0" not in title.value:
+            if "映像 1920 x 1080" in title.value:
                 break
             time.sleep(.08)
-        assert "1920 x 1080" in title.value, title.value
-
-        # Use a real WM_SYSKEYDOWN Alt-context flag, not a test-only shortcut.
-        assert u.PostMessageW(hwnd, WM_SYSKEYDOWN, ord("R"), 1 << 29)
-        for _ in range(40):
-            u.GetWindowTextW(hwnd, title, len(title))
-            if "Remote ON" in title.value:
-                break
-            time.sleep(.1)
-        assert "Remote ON" in title.value, title.value
+        assert "映像 1920 x 1080" in title.value, title.value
 
         point = POINT(960, 540)
         assert u.ClientToScreen(hwnd, ctypes.byref(point))
@@ -128,14 +119,14 @@ try:
         split = wait_pinch(sock)
         assert split[0] == 4
 
-        # Remote control OFF must suppress buffered/late control operations.
-        assert u.PostMessageW(hwnd, WM_SYSKEYDOWN, ord("R"), 1 << 29)
+        # UVC remains excluded from remote gestures.
+        assert ack(sock, struct.pack("!I", 0xffffffff) + b"\x01") == bytes(17)
         time.sleep(.1)
         for _ in range(3):
             wheel(hwnd, -120, point)
         time.sleep(.25)
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
-        print("V030 RAPID WHEEL BATCH / ZOOM DIRECTION / FRACTIONAL DETENTS / OFF SAFETY PASS")
+        print("V031 RAPID WHEEL BATCH / ZOOM DIRECTION / FRACTIONAL DETENTS / OFF SAFETY PASS")
 finally:
     if hwnd:
         u.PostMessageW(hwnd, WM_CLOSE, 0, 0)

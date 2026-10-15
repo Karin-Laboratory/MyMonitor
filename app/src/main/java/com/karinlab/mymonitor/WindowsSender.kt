@@ -124,7 +124,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                             // MMC6 adds an explicit source marker. Frame and ACK timing
                             // remain exactly as in MMC5; no inference from JPEG aspect ratio.
                             out.writeBytes("MMC6")
-                            report("受信機へTCP接続済み。映像フレーム待機中")
+                            report("Windowsに接続しました。映像の準備を待っています")
                             awaitingAckSince = 0L
                             var firstFrame = true
                             var announcedSource = -1
@@ -168,11 +168,15 @@ class WindowsSender(private val report: (String) -> Unit) {
                                         announcedSource = source
                                     } finally { awaitingAckSince = 0L }
                                 }
-                                val polled = frames.poll(500, TimeUnit.MILLISECONDS)
+                                // Keep keyboard ACK latency low only during an explicitly
+                                // armed Android-screen remote session. No new TCP socket.
+                                val inputArmed = StreamHub.controlArmed && source == 2
+                                val polled = frames.poll(if (inputArmed) 80 else 500,
+                                    TimeUnit.MILLISECONDS)
                                 if (polled == null) {
                                     // A static Android screen may deliver no new ImageReader
                                     // buffers for >5s. Heartbeat prevents false disconnects.
-                                    if (SystemClock.elapsedRealtime() - lastSentAt >= 1500L) {
+                                    if (SystemClock.elapsedRealtime() - lastSentAt >= (if (inputArmed) 120L else 1500L)) {
                                         awaitingAckSince = SystemClock.elapsedRealtime()
                                         try {
                                             out.writeInt(0) // MMC9 v014 heartbeat, no image
@@ -248,7 +252,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                             failures++
                             // Report every first loss, then sparingly on repeated failed attempts.
                             if (sessionWasConnected || failures == 1 || failures % 10 == 0) {
-                                report("接続が途切れました。自動再接続中: " + (e.message ?: e.javaClass.simpleName))
+                                report("Windowsとの接続が切れました。自動で接続し直しています: " + (e.message ?: e.javaClass.simpleName))
                             }
                         }
                     } finally {
