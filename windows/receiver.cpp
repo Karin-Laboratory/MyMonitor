@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <array>
 #include <map>
+#include <cmath>
 using namespace Gdiplus;
 static HWND windowHandle;
 static constexpr UINT WM_SOURCE_MODE = WM_APP + 2;
@@ -73,6 +74,22 @@ static ULONGLONG dragStarted = 0;
 static bool mouseDragging = false;
 static ULONGLONG lastTouchMs = 0;
 static std::map<UINT32,POINT> touchStart, touchEnd;
+// Aggregate rapid wheel detents into one two-finger gesture per short window.
+// Android runs gestures serially; flooding it with independent strokes cancels
+// the previous stroke on Android AccessibilityService.
+static constexpr UINT_PTR PINCH_TIMER_ID = 16;
+static constexpr UINT PINCH_BATCH_MS = 160;
+static int pinchPendingDetents = 0;
+static int pinchWheelRemainder = 0;
+static bool pinchTimerArmed = false;
+static POINT pinchAnchor{};
+static void clearPendingPinch(HWND hwnd) {
+    if (pinchTimerArmed) KillTimer(hwnd, PINCH_TIMER_ID);
+    pinchTimerArmed = false;
+    pinchPendingDetents = 0;
+    pinchWheelRemainder = 0;
+}
+
 static bool normalized(HWND hwnd, POINT pt, uint16_t &nx, uint16_t &ny) {
     RECT client{}; GetClientRect(hwnd,&client);
     std::shared_ptr<DecodedFrame> frame;
@@ -103,6 +120,39 @@ static void enqueueControl(HWND hwnd, int op, POINT from, POINT to, POINT second
     if (controlQueue.size() >= 64) controlQueue.erase(controlQueue.begin());
     controlQueue.push_back(data);
 }
+// One pinch gesture covers all wheel detents accumulated during 160ms.
+// Derive the stroke from the displayed image rectangle, not fixed pixels:
+// portrait phones, letterboxing, and window resizing all stay in bounds.
+static void flushPinchWheel(HWND hwnd) {
+    const int detents = pinchPendingDetents;
+    pinchPendingDetents = 0;
+    if (!detents || !remoteControlEnabled.load() || !linkConnected.load() ||
+        streamSource.load() == 1) return;
+    RECT client{}; GetClientRect(hwnd, &client);
+    std::shared_ptr<DecodedFrame> frame;
+    { std::lock_guard<std::mutex> guard(lockFrame); frame = picture; }
+    if (!frame || !frame->width || !frame->height ||
+        client.right <= 0 || client.bottom <= 0) return;
+    const double fit = (std::min)(double(client.right) / frame->width,
+                                   double(client.bottom) / frame->height);
+    const int width = int(frame->width * fit), height = int(frame->height * fit);
+    const int span = (std::min)(width, height);
+    if (span < 40) return;
+    const int left = (client.right - width) / 2, top = (client.bottom - height) / 2;
+    const int startRadius = (std::max)(4, int(span * 0.19));
+    const int strength = (std::min)(6, abs(detents));
+    const double scale = std::pow(1.52, strength);
+    const int endRadius = (std::max)(int(span * 0.045), (std::min)(
+        int(span * 0.42), int(startRadius * (detents > 0 ? (1.0 / scale) : scale))));
+    const int safeRadius = (std::max)(startRadius, endRadius) + 2;
+    const int midX = (std::clamp)(pinchAnchor.x, left + safeRadius, left + width - safeRadius - 1);
+    const int midY = (std::clamp)(pinchAnchor.y, top + 1, top + height - 2);
+    POINT a{midX-startRadius, midY}, b{midX-endRadius, midY};
+    POINT c{midX+startRadius, midY}, d{midX+endRadius, midY};
+    // DOWN (negative detents) moves fingers OUT and zooms IN.
+    enqueueControl(hwnd, 4, a, b, c, d);
+}
+
 static bool sendControlAck(SOCKET s, bool enhanced) {
     char ack[18] = {6};
     if (enhanced) {
@@ -437,6 +487,7 @@ static void resizeForUvc(HWND hwnd) {
 static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
     switch (message) {
     case WM_SOURCE_MODE:
+        if (w == 1) clearPendingPinch(hwnd);
         // Ignore metadata queued by an already-disconnected TCP session.
         if (w == 1 && static_cast<std::uint64_t>(l) == sessionGeneration.load())
             resizeForUvc(hwnd);
@@ -458,7 +509,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         const ULONGLONG now = GetTickCount64();
         if (now - lastTitleUpdate >= 1000) {
             lastTitleUpdate = now;
-            std::wstring title = L"My Cast Receiver 028";
+            std::wstring title = L"My Cast Receiver 029";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
                 if (picture) title += L" - " + std::to_wstring(picture->width) +
@@ -479,13 +530,15 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         return 0;
     }
     case WM_SYSKEYDOWN:
-        if (w == 'R' && (GetKeyState(VK_MENU)&0x8000)) {
+        if (w == 'R' && ((static_cast<unsigned long long>(l) & (1ULL << 29)) ||
+                         (GetKeyState(VK_MENU)&0x8000))) {
             // Holding Alt+R repeats WM_SYSKEYDOWN; toggle only for initial press.
             if ((static_cast<unsigned long long>(l) & (1ULL << 30)) == 0) {
                 const bool enabledNow = !remoteControlEnabled.load();
                 remoteControlEnabled.store(enabledNow);
                 if (!enabledNow) {
                     // Old gestures must not execute after input is re-enabled.
+                    clearPendingPinch(hwnd);
                     std::lock_guard<std::mutex> guard(controlMutex);
                     controlQueue.clear();
                 }
@@ -537,16 +590,23 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
     case WM_MOUSEWHEEL: {
         POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
         ScreenToClient(hwnd,&point);
-        POINT end=point;
         const int delta=GET_WHEEL_DELTA_WPARAM(w);
-        if (GetKeyState(VK_CONTROL)&0x8000) {
-            end.y += delta>0?-60:60;
-            POINT a=point,b=point,c=point,d=point;
-            // Ctrl+wheel DOWN = pinch OUT; UP = pinch IN.
-            a.x-=55; b.x-=delta<0?85:30;
-            c.x+=55; d.x+=delta<0?85:30;
-            enqueueControl(hwnd,4,a,b,c,d);
+        // MK_CONTROL comes from the wheel message; GetKeyState alone can
+        // miss modifier state when receiving redirected/synthetic input.
+        if ((GET_KEYSTATE_WPARAM(w) & MK_CONTROL) || (GetKeyState(VK_CONTROL)&0x8000)) {
+            if (!remoteControlEnabled.load() || !linkConnected.load()) return 0;
+            pinchAnchor = point;
+            pinchWheelRemainder += delta;
+            const int detents = pinchWheelRemainder / WHEEL_DELTA;
+            pinchWheelRemainder -= detents * WHEEL_DELTA;
+            pinchPendingDetents = (std::clamp)(pinchPendingDetents + detents, -24, 24);
+            if (pinchPendingDetents && !pinchTimerArmed) {
+                pinchTimerArmed = SetTimer(hwnd, PINCH_TIMER_ID, PINCH_BATCH_MS, nullptr) != 0;
+                if (!pinchTimerArmed) flushPinchWheel(hwnd);
+            }
         } else {
+            // Preserve v028 one-wheel-event scrolling for normal wheel input.
+            POINT end=point;
             end.y+=delta>0?120:-120;
             enqueueControl(hwnd,3,point,end);
         }
@@ -639,7 +699,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                 FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, RGB(210,210,210));
-                const wchar_t* text = L"My Cast Receiver 028\nWaiting on TCP 57007\n\n"
+                const wchar_t* text = L"My Cast Receiver 029\nWaiting on TCP 57007\n\n"
                     L"Android: auto discovery or IPv4 + port 57007\n"
                     L"OBS: Window Capture -> My Cast Receiver\nFull HD / Screen + audio / UVC";
                 DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_WORDBREAK);
@@ -660,10 +720,15 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         return 0;
     }
     case WM_TIMER:
+        if (w == PINCH_TIMER_ID) {
+            KillTimer(hwnd, PINCH_TIMER_ID);
+            pinchTimerArmed = false;
+            flushPinchWheel(hwnd);
+        }
         if (w == 15) queueRefresh(); // periodic diagnostics and disconnected UI
         return 0;
     case WM_SIZE: InvalidateRect(hwnd, nullptr, FALSE); return 0;
-    case WM_CLOSE: KillTimer(hwnd, 15); DestroyWindow(hwnd); return 0;
+    case WM_CLOSE: clearPendingPinch(hwnd); KillTimer(hwnd, 15); DestroyWindow(hwnd); return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
     return DefWindowProc(hwnd, message, w, l);
