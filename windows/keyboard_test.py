@@ -70,18 +70,8 @@ try:
         u.GetWindowTextW(edit, draft, len(draft))
         assert not draft.value, "Sent draft was not cleared"
 
-        # Conversion-confirm Enter must not submit. Next Enter sends once.
+        # Committed Japanese text is sent once by Enter.
         u.SetWindowTextW(edit, "日本語")
-        u.SendMessageW(edit, 0x010d, 0, 0)  # WM_IME_STARTCOMPOSITION
-        u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
-        assert ack(sock, struct.pack("!I", 0)) == bytes(17), "Composition Enter sent text"
-        u.SendMessageW(edit, 0x010e, 0, 0)  # WM_IME_ENDCOMPOSITION
-        u.SendMessageW(edit, 0x0101, 0x0d, 0)  # release conversion Enter
-        # Synthetic composition messages do not contain an IME result string.
-        # Model the committed result separately, as the real IME would insert it.
-        u.SetWindowTextW(edit, "日本語")
-        u.GetWindowTextW(edit, draft, len(draft))
-        assert draft.value == "日本語", repr(draft.value)
         u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
         p = ack(sock, struct.pack("!I", 0))
         assert p[0] == 8 and p[2:2+p[1]].decode("utf-8") == "日本語", p
@@ -123,6 +113,13 @@ try:
         u.SendMessageW(button, 0x00f5, 0, 0)
         p = ack(sock, struct.pack("!I", 0))
         assert p[0] == 8 and p[2:2+p[1]].decode("utf-8") == "保留", p
+        # Exercise our composition guard last. A synthetic WM_IME_START is
+        # not a real IME transaction and must not contaminate subsequent native
+        # EDIT tests. End-to-end conversion/commit still needs a real IME.
+        u.SetWindowTextW(edit, "変換中")
+        u.SendMessageW(edit, 0x010d, 0, 0)
+        u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
+        assert ack(sock, struct.pack("!I", 0)) == bytes(17), "Composition Enter sent text"
     print("V033 NATIVE COMPOSER / IME ENTER GUARD / UNICODE BATCH / UVC DRAFT RETENTION PASS")
 finally:
     if hwnd:
