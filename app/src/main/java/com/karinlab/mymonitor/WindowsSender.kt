@@ -168,11 +168,15 @@ class WindowsSender(private val report: (String) -> Unit) {
                                         announcedSource = source
                                     } finally { awaitingAckSince = 0L }
                                 }
-                                val polled = frames.poll(500, TimeUnit.MILLISECONDS)
+                                // Keep keyboard ACK latency low only during an explicitly
+                                // armed Android-screen remote session. No new TCP socket.
+                                val inputArmed = StreamHub.controlArmed && source == 2
+                                val polled = frames.poll(if (inputArmed) 80 else 500,
+                                    TimeUnit.MILLISECONDS)
                                 if (polled == null) {
                                     // A static Android screen may deliver no new ImageReader
                                     // buffers for >5s. Heartbeat prevents false disconnects.
-                                    if (SystemClock.elapsedRealtime() - lastSentAt >= 1500L) {
+                                    if (SystemClock.elapsedRealtime() - lastSentAt >= (if (inputArmed) 120L else 1500L)) {
                                         awaitingAckSince = SystemClock.elapsedRealtime()
                                         try {
                                             out.writeInt(0) // MMC9 v014 heartbeat, no image
