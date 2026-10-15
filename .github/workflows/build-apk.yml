@@ -190,6 +190,6 @@ jobs:
             gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.30" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
             gh release edit v0.30 --target "${GITHUB_SHA}"
           else
-            gh release create v0.30 mymonitor030.apk mycastreceiver030.exe TRANSFER.md SPEC_FIX_030.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 030 + Native Windows Receiver' --notes 'v030: reverse Ctrl-wheel mapping (UP zooms in, DOWN zooms out) while preserving v029's smooth batched pinch queue; native wheel direction regression tests PASS before publishing. MMC6, F11, UVC recovery and audio/video retained. EXE unsigned; hardware zoom validation still needed.'
+            gh release create v0.30 mymonitor030.apk mycastreceiver030.exe TRANSFER.md SPEC_FIX_030.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 030 + Native Windows Receiver' --notes 'v030: reverse Ctrl-wheel mapping (UP zooms in, DOWN zooms out) while preserving v029 smooth batched pinch queue; native wheel direction regression tests PASS before publishing. MMC6, F11, UVC recovery and audio/video retained. EXE unsigned; hardware zoom validation still needed.'
           fi
           test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.30 --jq '.object.sha')" = "${GITHUB_SHA}"
