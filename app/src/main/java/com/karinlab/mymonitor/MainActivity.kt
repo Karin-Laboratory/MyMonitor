@@ -403,7 +403,7 @@ class MainActivity : AppCompatActivity() {
             startActivityForResult(request, 490)
         } catch (e: Exception) {
             requestingProjection = false
-            showStatus("画面共有の許可画面を開けません: " + e.message)
+            showStatus("Androidの画面共有を開始できませんでした: " + e.message)
         }
     }
 
@@ -471,7 +471,7 @@ class MainActivity : AppCompatActivity() {
             wasUvcEverReady = false
             notifyServiceSource()
             if (ScreenStreamService.projectionActive) {
-                showStatus("UVCを取り外しました。スマホ画面へ復帰")
+                showStatus("USBカメラを外したため、Android画面の転送に戻ります")
                 if (resumeRecordingOnScreen) {
                     resumeRecordingOnScreen = false
                     startService(Intent(this, ScreenStreamService::class.java).apply {
@@ -534,7 +534,7 @@ class MainActivity : AppCompatActivity() {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 mountCamera()
                 scanUsbDevices()
-            } else showStatus("UVCカメラ権限が拒否されました")
+            } else showStatus("USBカメラを使うにはカメラの許可が必要です")
         }
         if (requestCode == 102) {
             // Screen capture still works without audio, but playback capture needs RECORD_AUDIO.

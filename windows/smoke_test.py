@@ -65,6 +65,15 @@ try:
             if '1920 x 1080' in title.value: break
             time.sleep(.1)
         assert '1920 x 1080' in title.value, title.value
+        # Live display/client sizes must follow an actual window resize immediately.
+        u.MoveWindow.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_bool)
+        u.MoveWindow(hwnd, 0, 0, 900, 700, True)
+        bounds = (ctypes.c_long * 4)()
+        u.GetClientRect(hwnd, ctypes.byref(bounds))
+        u.GetWindowTextW(hwnd, title, 256)
+        assert f"ウィンドウ {bounds[2]} x {bounds[3]}" in title.value, title.value
+        scale = min(bounds[2]/1920, bounds[3]/1080)
+        assert f"表示 {int(1920*scale)} x {int(1080*scale)}" in title.value, title.value
         print(f'Full HD ACK: mean={sum(times)/len(times):.1f}ms max={max(times):.1f}ms (loopback; not Wi-Fi latency)')
         # One corrupt MJPEG frame must be ACKed/skipped, not destroy the stream.
         bad = b'broken-JPEG-no-SOI'

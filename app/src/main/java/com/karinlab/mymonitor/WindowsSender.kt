@@ -124,7 +124,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                             // MMC6 adds an explicit source marker. Frame and ACK timing
                             // remain exactly as in MMC5; no inference from JPEG aspect ratio.
                             out.writeBytes("MMC6")
-                            report("受信機へTCP接続済み。映像フレーム待機中")
+                            report("Windowsに接続しました。映像の準備を待っています")
                             awaitingAckSince = 0L
                             var firstFrame = true
                             var announcedSource = -1
@@ -252,7 +252,7 @@ class WindowsSender(private val report: (String) -> Unit) {
                             failures++
                             // Report every first loss, then sparingly on repeated failed attempts.
                             if (sessionWasConnected || failures == 1 || failures % 10 == 0) {
-                                report("接続が途切れました。自動再接続中: " + (e.message ?: e.javaClass.simpleName))
+                                report("Windowsとの接続が切れました。自動で接続し直しています: " + (e.message ?: e.javaClass.simpleName))
                             }
                         }
                     } finally {
