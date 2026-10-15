@@ -226,3 +226,17 @@ assert 'setupRemoteButton = setupAction(' in activity
 assert 'override fun onNewIntent(' in activity
 assert 'android:launchMode="singleTop"' in manifest
 print("V031 PRESENTATION: actionable no-UVC settings with Activity reuse PASS")
+
+# v031 keyboard uses previously reserved MMC6 reverse ACK opcodes while
+# retaining all v025/v029 controls and per-session Android authorization.
+keyboard=file("app/src/main/java/com/karinlab/mymonitor/RemoteKeyboardPolicy.kt")
+remote=file("app/src/main/java/com/karinlab/mymonitor/RemoteControlService.kt")
+assert 'const val TEXT = 8' in keyboard and 'const val KEY = 9' in keyboard
+assert 'RemoteKeyboardPolicy.decodeText(packet)' in remote
+assert 'node.isPassword' in remote and 'node.isEditable' in remote
+assert 'StreamHub.controlArmed' in remote
+assert 'WM_CHAR' in receiver and 'enqueueKeyboardCodepoint' in receiver
+assert 'streamSource.load() != 2' in receiver
+assert 'if (inputArmed) 120L else 1500L' in sender
+assert 'keyboard_test.py' in file(".github/workflows/build-apk.yml")
+print("V031 UTF-8 KEYBOARD ACK FRAMING, SCREEN-ONLY AND SAFE-OFF CONTRACT PASS")
