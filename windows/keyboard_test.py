@@ -77,6 +77,11 @@ try:
         assert ack(sock, struct.pack("!I", 0)) == bytes(17), "Composition Enter sent text"
         u.SendMessageW(edit, 0x010e, 0, 0)  # WM_IME_ENDCOMPOSITION
         u.SendMessageW(edit, 0x0101, 0x0d, 0)  # release conversion Enter
+        # Synthetic composition messages do not contain an IME result string.
+        # Model the committed result separately, as the real IME would insert it.
+        u.SetWindowTextW(edit, "日本語")
+        u.GetWindowTextW(edit, draft, len(draft))
+        assert draft.value == "日本語", repr(draft.value)
         u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
         p = ack(sock, struct.pack("!I", 0))
         assert p[0] == 8 and p[2:2+p[1]].decode("utf-8") == "日本語", p
