@@ -97,6 +97,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var setupOverlay: ScrollView
     private lateinit var setupStatus: TextView
     private lateinit var setupRemoteButton: Button
+    private lateinit var setupReturnButton: Button
+    private var settingsRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -154,7 +156,13 @@ class MainActivity : AppCompatActivity() {
         setupRemoteButton = setupAction("🔒 遠隔操作を許可") { toggleRemoteControlPermission() }
         setup.addView(setupRemoteButton)
         setup.addView(setupAction("⚙ Windows接続先を手動設定") { windowsSettings() })
-        setup.addView(setupAction("← Android画面へ戻る") { moveTaskToBack(true) })
+        setupReturnButton = setupAction("← Android画面へ戻る") {
+            if (StreamHub.uvcReady) {
+                settingsRequested = false
+                refreshPresentation()
+            } else moveTaskToBack(true)
+        }
+        setup.addView(setupReturnButton)
         setupOverlay = ScrollView(this).apply {
             setBackgroundColor(0xff121b29.toInt())
             setFillViewport(true)
@@ -246,9 +254,10 @@ class MainActivity : AppCompatActivity() {
     /** Keep the physical UVC path untouched. No camera means settings, not black. */
     private fun refreshPresentation() {
         if (!::setupOverlay.isInitialized) return
-        val uvcConnected = hasUvcDevice()
-        setupOverlay.visibility = if (uvcConnected) View.GONE else View.VISIBLE
-        if (uvcConnected) return
+        val uvcReady = StreamHub.uvcReady
+        val showSettings = settingsRequested || !uvcReady
+        setupOverlay.visibility = if (showSettings) View.VISIBLE else View.GONE
+        if (!showSettings) return
         val receiver = StreamHub.selectedHost?.let { "接続先: $it" }
             ?: "Windows受信機: 検索中 / 未接続"
         val projection = if (ScreenStreamService.projectionActive) {
@@ -260,7 +269,14 @@ class MainActivity : AppCompatActivity() {
             StreamHub.controlArmed -> "このセッションで許可中"
             else -> "許可OFF"
         }
-        setupStatus.text = "$receiver\n$projection\n遠隔操作: $remote"
+        val usb = when {
+            uvcReady -> "UVC映像: 表示中 / Windowsへ自動転送"
+            hasUvcDevice() -> "UVC接続検出: 映像を準備中"
+            else -> "UVC: 未接続（Android画面を利用）"
+        }
+        setupStatus.text = "$usb\n$receiver\n$projection\n遠隔操作: $remote"
+        setupReturnButton.text = if (uvcReady) "← UVCモニターへ戻る"
+            else "← Android画面へ戻る"
         setupRemoteButton.text = when {
             !RemoteControlService.active() -> "🔒 遠隔操作の権限を設定"
             StreamHub.controlArmed -> "🔓 遠隔操作を停止"
@@ -385,6 +401,8 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(next: Intent) {
         super.onNewIntent(next)
         setIntent(next)
+        if (next.action == Intent.ACTION_MAIN) settingsRequested = true
+        if (next.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) settingsRequested = false
         refreshPresentation()
         when (next.action) {
             "com.karinlab.mymonitor.GRANT_SCREEN" -> {
@@ -404,6 +422,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun onUvcReady() {
+        // A newly opened camera takes priority; it must never be obscured by
+        // settings left over from a previous launcher re-entry.
+        settingsRequested = false
         refreshPresentation()
         wasUvcEverReady = true
         notifyServiceSource()
