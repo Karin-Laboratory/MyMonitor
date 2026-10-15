@@ -1,7 +1,7 @@
 name: Build APK and Windows Receiver
 on:
   push:
-    branches: [main, v030-wheel-direction]
+    branches: [main, v030-wheel-direction, v031-ui-keyboard]
   workflow_dispatch:
 concurrency:
   group: mymonitor-${{ github.ref }}
