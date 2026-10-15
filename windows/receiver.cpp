@@ -506,6 +506,7 @@ static void receiveLoop() {
                 unsigned char mode = 0;
                 if (!readExact(s, reinterpret_cast<char*>(&mode), 1) || mode > 2) break;
                 const int oldSource = streamSource.exchange(mode);
+                queueRefresh();
                 if (mode == 1 && oldSource != 1) {
                     PostMessageW(windowHandle, WM_SOURCE_MODE, 1, static_cast<LPARAM>(generation));
                 }
@@ -648,6 +649,9 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         originalEditProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(textInput, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(inputEditProc)));
         return 0;
     }
+    case WM_SETFOCUS:
+        if (inputBarVisible) { SetFocus(textInput); return 0; }
+        break;
     case WM_COMMAND:
         if (LOWORD(w) == INPUT_SEND_ID && HIWORD(w) == BN_CLICKED) { sendInputText(); return 0; }
         break;
