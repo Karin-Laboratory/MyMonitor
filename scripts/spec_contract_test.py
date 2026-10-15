@@ -204,5 +204,5 @@ assert 'GestureResultCallback()' in remote
 assert 'override fun onCompleted(' in remote and 'override fun onCancelled(' in remote
 assert 'private fun pump(service:' in remote and 'gestureRunning = true' in remote
 assert 'pending.addLast(packet.copyOf())' in remote and 'return // Wait for onCompleted' in remote
-assert 'windows/wheel_test.py' in {p.as_posix().replace('\\', '/') for p in root.rglob('wheel_test.py')}
+assert (root / "windows/wheel_test.py").exists()
 print("V029 WHEEL BATCHING + SEQUENTIAL ACCESSIBILITY GESTURES CONTRACT PASS")
