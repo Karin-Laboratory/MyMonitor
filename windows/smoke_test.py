@@ -62,9 +62,9 @@ try:
         title = ctypes.create_unicode_buffer(256)
         for _ in range(30):
             u.GetWindowTextW(hwnd, title, 256)
-            if '1920 x 1080' in title.value: break
+            if '映像 1920 x 1080' in title.value: break
             time.sleep(.1)
-        assert '1920 x 1080' in title.value, title.value
+        assert '映像 1920 x 1080' in title.value, title.value
         # Live display/client sizes must follow an actual window resize immediately.
         u.MoveWindow.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_bool)
         u.MoveWindow(hwnd, 0, 0, 900, 700, True)
@@ -102,7 +102,7 @@ try:
             assert s.recv(1) == b'\x06', 'Heartbeat failed'
         title = ctypes.create_unicode_buffer(256)
         u.GetWindowTextW(hwnd, title, 256)
-        assert 'Android未接続' not in title.value and '1920 x 1080' in title.value, title.value
+        assert 'Android未接続' not in title.value and '映像 1920 x 1080' in title.value, title.value
     print('7-second static-screen idle / heartbeat / no blank frame: PASS')
     # Sender vanished: retain LAST good frame and signal link loss.
     for _ in range(30):

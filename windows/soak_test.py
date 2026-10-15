@@ -58,10 +58,10 @@ try:
     title = ctypes.create_unicode_buffer(256)
     for _ in range(50):
         u.GetWindowTextW(hwnd, title, 256)
-        if ("1920 x 1080" in title.value and
+        if ("映像 1920 x 1080" in title.value and
             u.GetPropW(hwnd, "MyCastRejectedFrames") == bad_count): break
         time.sleep(.1)
-    assert "1920 x 1080" in title.value, f"Frame lost: {title.value}"
+    assert "映像 1920 x 1080" in title.value, f"Frame lost: {title.value}"
     assert u.GetPropW(hwnd, "MyCastRejectedFrames") == bad_count, title.value
     elapsed = time.monotonic() - start
     assert elapsed >= 120, f"Soak ran too quickly: {elapsed}"

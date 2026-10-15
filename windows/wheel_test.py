@@ -92,10 +92,10 @@ try:
         for _ in range(80):
             title = ctypes.create_unicode_buffer(512)
             u.GetWindowTextW(hwnd, title, len(title))
-            if "1920 x 1080" in title.value:
+            if "映像 1920 x 1080" in title.value:
                 break
             time.sleep(.08)
-        assert "1920 x 1080" in title.value, title.value
+        assert "映像 1920 x 1080" in title.value, title.value
 
         point = POINT(960, 540)
         assert u.ClientToScreen(hwnd, ctypes.byref(point))

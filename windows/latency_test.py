@@ -54,10 +54,10 @@ try:
         for _ in range(60):
             caption = title(hwnd)
             decoded = user32.GetPropW(hwnd, "MyCastDecodedFrames")
-            if "1920 x 1080" in caption and decoded > 0:
+            if "映像 1920 x 1080" in caption and decoded > 0:
                 break
             time.sleep(.1)
-        assert "1920 x 1080" in caption and "Android接続中" in caption, caption
+        assert "映像 1920 x 1080" in caption and "Android接続中" in caption, caption
         assert decoded > 0, caption
         assert "reconnecting" not in caption, caption
         assert proc.poll() is None, "Windows receiver crashed during burst"
