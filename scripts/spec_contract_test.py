@@ -74,7 +74,7 @@ assert "PowerManager.PARTIAL_WAKE_LOCK" in service
 assert "refreshPowerLock()" in service
 assert "onTaskRemoved(" in service
 assert "onTrimMemory(" in service
-assert 'versionCode 29' in file("app/build.gradle")
+assert 'versionCode 30' in file("app/build.gradle")
 print("V017 POWER/LIFECYCLE CONTRACTS RETAINED (v018 preview supersedes ratio check)")
 
 # v018: the UVC image-size decision belongs to the parent viewport exactly once.
@@ -88,7 +88,7 @@ assert "camera?.setRenderSize(" not in fragment
 assert "PreviewGeometry.centered(" in fragment
 assert "fun centered(" in preview_geometry
 assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
-assert "versionCode 29" in file("app/build.gradle")
+assert "versionCode 30" in file("app/build.gradle")
 print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
 
 # v019 audio lifecycle and Windows binary provenance.
@@ -106,7 +106,7 @@ assert 'playbackAudioAllowed' in hub
 assert "waveOutReset(device)" in file("windows/audio_receiver.h")
 assert "VERSIONINFO" in file("windows/receiver.rc")
 assert "msvc" in file(".github/workflows/build-apk.yml").lower()
-assert 'versionCode 29' in file("app/build.gradle")
+assert 'versionCode 30' in file("app/build.gradle")
 print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")
 assert "private var opening = false" in fragment
 assert "if (opening || closing || camera != null || !physicalPresent(device)) return" in fragment
@@ -140,7 +140,7 @@ assert "reconcilePhysicalUsb()" in activity and "usbReconcileTask" in activity
 assert "staleCallbacksMustNotChangeNewMonitorState" in tests
 assert "spuriousDisconnectMustNotDestroyActiveCamera" in tests
 assert "nativeFailureRetriesAreBounded" in tests
-assert "versionName '0.29'" in file("app/build.gradle")
+assert "versionName '0.30'" in file("app/build.gradle")
 assert "retryDelayMs(" in policy
 assert "MyCastReceiver.exe" not in file(".github/workflows/build-apk.yml")
 print("V023 RC USB EVENT EPOCH / TIMEOUT / RELEASE CONTRACT PASS")
@@ -206,3 +206,10 @@ assert 'private fun pump(service:' in remote and 'gestureRunning = true' in remo
 assert 'pending.addLast(packet.copyOf())' in remote and 'return // Wait for onCompleted' in remote
 assert (root / "windows/wheel_test.py").exists()
 print("V029 WHEEL BATCHING + SEQUENTIAL ACCESSIBILITY GESTURES CONTRACT PASS")
+# v030: direction reversal only; batching and Android gesture scheduling retained.
+assert 'detents < 0 ? (1.0 / scale) : scale' in receiver
+assert 'detents > 0 ? (1.0 / scale) : scale' not in receiver
+wheel_test = file("windows/wheel_test.py")
+assert 'Wheel DOWN first finger did not move right' in wheel_test
+assert 'Wheel UP first finger did not move left' in wheel_test
+print("V030 CTRL-WHEEL UP=ZOOM IN, DOWN=ZOOM OUT CONTRACT PASS")
