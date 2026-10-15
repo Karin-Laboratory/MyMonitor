@@ -60,7 +60,7 @@ stateDiagram-v2
 
 - Do not bypass Android AccessibilityService's system grant or screen-capture consent.
 - Maintain **Android per-session opt-in**, source=SCREEN, live transport, projection active, unlocked screen.
-- Simplification proposed: once Android has explicitly armed the session, Windows should need no additional Alt+R enable action. Alt+R remains a local *pause/resume override* (default ready); see security considerations. **Not implemented in this first UX commit**, to avoid silently changing v030 semantics during initial UX validation.
+- Simplification proposed: once Android has explicitly armed the session, Windows should need no additional Alt+R enable action. Alt+R remains a local *pause/resume override* (default ready); see security considerations. **Not implemented in this v031 candidate**: the additional Windows Alt+R safeguard remains until authentication and permission UX are validated.
 - Current transport has no cryptographic peer authentication. Do not expose TCP 57007, 57009 or UDP 57008 outside trusted LAN; add approved pairing before broader public distribution.
 
 ### v031 keyboard implementation boundaries
