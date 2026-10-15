@@ -106,6 +106,7 @@ static void layoutInputBar(HWND hwnd) {
     RECT client{}; GetClientRect(hwnd, &client);
     const bool show = linkConnected.load() && streamSource.load() == 2;
     static LONG oldW = -1, oldH = -1;
+    const bool becameVisible = show && !inputBarVisible;
     const bool changed = inputBarVisible != show || oldW != client.right || oldH != client.bottom;
     inputBarVisible = show;
     if (!textInput || !changed) return;
@@ -115,6 +116,7 @@ static void layoutInputBar(HWND hwnd) {
     MoveWindow(textInput, 10, top + 28, (std::max)(1L, client.right - 106), 32, TRUE);
     MoveWindow(sendButton, (std::max)(0L, client.right - 86), top + 28, 76, 32, TRUE);
     for (HWND child : {textInput, sendButton, inputHint}) ShowWindow(child, show ? SW_SHOW : SW_HIDE);
+    if (becameVisible && GetForegroundWindow() == hwnd) SetFocus(textInput);
 }
 static bool sendInputText();
 static LRESULT CALLBACK inputEditProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
