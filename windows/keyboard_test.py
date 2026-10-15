@@ -53,17 +53,22 @@ try:
         # Native edit holds a draft; no character leaks before explicit send.
         u.GetDlgItem.argtypes = (ctypes.c_void_p, ctypes.c_int)
         u.GetDlgItem.restype = ctypes.c_void_p
-        u.SetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
-        u.GetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
         u.IsWindowVisible.argtypes = (ctypes.c_void_p,)
         u.GetPropW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
         u.GetPropW.restype = ctypes.c_size_t
         def diagnostics():
-            text = ctypes.create_unicode_buffer(260)
-            u.GetWindowTextW(edit, text, len(text))
-            return {"draft": text.value, **{name: u.GetPropW(edit, "MyCastComposer" + name) for name in ("Guard", "Send", "Pending")}}
+            return {"draft": get_draft(), **{name: u.GetPropW(edit, "MyCastComposer" + name) for name in ("Guard", "Send", "Pending")}}
         edit = u.GetDlgItem(hwnd, 3301)
         button = u.GetDlgItem(hwnd, 3302)
+        # Controls belong to a different process: WM_SETTEXT / WM_GETTEXT are
+        # marshalled by Windows, unlike SetWindowText/GetWindowText shortcuts.
+        def set_draft(text):
+            buffer = ctypes.create_unicode_buffer(text)
+            assert u.SendMessageW(edit, 0x000c, 0, ctypes.addressof(buffer))
+        def get_draft():
+            buffer = ctypes.create_unicode_buffer(260)
+            u.SendMessageW(edit, 0x000d, len(buffer), ctypes.addressof(buffer))
+            return buffer.value
         assert edit and button and u.IsWindowVisible(edit), "Missing native text composer"
         u.SendMessageW(edit, WM_CHAR, ord("a"), 0)
         u.SendMessageW(edit, WM_CHAR, ord("日"), 0)
@@ -73,12 +78,10 @@ try:
         p = ack(sock, struct.pack("!I", 0))
         assert p[:6] == bytes([8, 4]) + "a日".encode("utf-8"), p
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
-        draft = ctypes.create_unicode_buffer(260)
-        u.GetWindowTextW(edit, draft, len(draft))
-        assert not draft.value, "Sent draft was not cleared"
+        assert not get_draft(), "Sent draft was not cleared"
 
         # Committed Japanese text is sent once by Enter.
-        u.SetWindowTextW(edit, "日本語")
+        set_draft("日本語")
         u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
         u.SendMessageW(edit, 0x0101, 0x0d, 0)
         p = ack(sock, struct.pack("!I", 0))
@@ -86,7 +89,7 @@ try:
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
 
         # Editing keys operate locally; Send button submits the edited draft.
-        u.SetWindowTextW(edit, "ab")
+        set_draft("ab")
         u.SendMessageW(edit, 0x00b1, 2, 2)  # EM_SETSEL
         u.SendMessageW(edit, WM_CHAR, VK_BACK, 0)
         u.SendMessageW(button, 0x00f5, 0, 0)  # BM_CLICK
@@ -96,7 +99,7 @@ try:
 
         # A long Unicode draft crosses many packets, without splitting scalars.
         message = "日" * 120 + "😀" * 20
-        u.SetWindowTextW(edit, message)
+        set_draft(message)
         u.SendMessageW(button, 0x00f5, 0, 0)
         received = ""
         for _ in range(64):
@@ -107,13 +110,12 @@ try:
         assert received == message, (len(received), len(message))
 
         # Physical UVC display never sends text and retains any unsent draft.
-        u.SetWindowTextW(edit, "保留")
+        set_draft("保留")
         assert ack(sock, struct.pack("!I", 0xffffffff) + b"\x01") == bytes(17)
         time.sleep(.3)
         u.SendMessageW(button, 0x00f5, 0, 0)
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
-        u.GetWindowTextW(edit, draft, len(draft))
-        assert draft.value == "保留"
+        assert get_draft() == "保留"
         assert not u.IsWindowVisible(edit)
 
         assert ack(sock, struct.pack("!I", 0xffffffff) + b"\x02") == bytes(17)
@@ -124,7 +126,7 @@ try:
         # Exercise our composition guard last. A synthetic WM_IME_START is
         # not a real IME transaction and must not contaminate subsequent native
         # EDIT tests. End-to-end conversion/commit still needs a real IME.
-        u.SetWindowTextW(edit, "変換中")
+        set_draft("変換中")
         u.SendMessageW(edit, 0x010d, 0, 0)
         u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
         assert ack(sock, struct.pack("!I", 0)) == bytes(17), "Composition Enter sent text"
