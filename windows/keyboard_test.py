@@ -56,6 +56,12 @@ try:
         u.SetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
         u.GetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
         u.IsWindowVisible.argtypes = (ctypes.c_void_p,)
+        u.GetPropW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+        u.GetPropW.restype = ctypes.c_size_t
+        def diagnostics():
+            text = ctypes.create_unicode_buffer(260)
+            u.GetWindowTextW(edit, text, len(text))
+            return {"draft": text.value, **{name: u.GetPropW(edit, "MyCastComposer" + name) for name in ("Guard", "Send", "Pending")}}
         edit = u.GetDlgItem(hwnd, 3301)
         button = u.GetDlgItem(hwnd, 3302)
         assert edit and button and u.IsWindowVisible(edit), "Missing native text composer"
@@ -63,6 +69,7 @@ try:
         u.SendMessageW(edit, WM_CHAR, ord("日"), 0)
         assert ack(sock, struct.pack("!I", 0)) == bytes(17), "Draft leaked before send"
         u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
+        u.SendMessageW(edit, 0x0101, 0x0d, 0)
         p = ack(sock, struct.pack("!I", 0))
         assert p[:6] == bytes([8, 4]) + "a日".encode("utf-8"), p
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
@@ -73,8 +80,9 @@ try:
         # Committed Japanese text is sent once by Enter.
         u.SetWindowTextW(edit, "日本語")
         u.SendMessageW(edit, WM_KEYDOWN, 0x0d, 0)
+        u.SendMessageW(edit, 0x0101, 0x0d, 0)
         p = ack(sock, struct.pack("!I", 0))
-        assert p[0] == 8 and p[2:2+p[1]].decode("utf-8") == "日本語", p
+        assert p[0] == 8 and p[2:2+p[1]].decode("utf-8") == "日本語", (p, diagnostics())
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
 
         # Editing keys operate locally; Send button submits the edited draft.

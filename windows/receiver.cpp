@@ -120,6 +120,7 @@ static void layoutInputBar(HWND hwnd) {
 }
 static bool sendInputText();
 static LRESULT CALLBACK inputEditProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
+    if (message == WM_SETTEXT) { composingText = false; compositionReturn = false; }
     if (message == WM_GETDLGCODE) return DLGC_WANTALLKEYS;
     if (message == WM_IME_STARTCOMPOSITION) composingText = true;
     if (message == WM_IME_ENDCOMPOSITION) composingText = false;
@@ -130,6 +131,7 @@ static LRESULT CALLBACK inputEditProc(HWND hwnd, UINT message, WPARAM w, LPARAM 
         return 0;
     }
     if (message == WM_KEYDOWN && w == VK_RETURN) {
+        SetPropW(hwnd, L"MyCastComposerGuard", reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>((composingText ? 1 : 0) | (compositionReturn ? 2 : 0))));
         if (composingText || compositionReturn) {
             compositionReturn = true;
             return CallWindowProcW(originalEditProc, hwnd, message, w, l);
@@ -225,20 +227,25 @@ static void enqueueKeyboardKey(int id) {
     controlQueue.push_back(pkt);
 }
 static bool sendInputText() {
+    SetPropW(textInput, L"MyCastComposerSend", reinterpret_cast<HANDLE>(1));
     if (!inputBarVisible || !linkConnected.load() || streamSource.load() != 2) return false;
     HIMC imc = ImmGetContext(textInput);
     const bool pendingComposition = imc && ImmGetCompositionStringW(imc, GCS_COMPSTR, nullptr, 0) > 0;
     if (imc) ImmReleaseContext(textInput, imc);
+    SetPropW(textInput, L"MyCastComposerPending", reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(pendingComposition)));
     if (composingText || pendingComposition) {
+        SetPropW(textInput, L"MyCastComposerSend", reinterpret_cast<HANDLE>(2));
         SetWindowTextW(inputHint, L"変換を確定してから送信してください");
         SetFocus(textInput);
         return false;
     }
+    SetPropW(textInput, L"MyCastComposerSend", reinterpret_cast<HANDLE>(3));
     const int count = GetWindowTextLengthW(textInput);
     if (count == 0) return false;
     std::wstring text(count + 1, L'\0');
     GetWindowTextW(textInput, text.data(), count + 1);
     text.resize(count);
+    SetPropW(textInput, L"MyCastComposerSend", reinterpret_cast<HANDLE>(4));
     const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), count, nullptr, 0, nullptr, nullptr);
     if (size <= 0) return false;
     std::string utf8(size, '\0');
@@ -258,11 +265,13 @@ static bool sendInputText() {
         std::lock_guard<std::mutex> guard(controlMutex);
         // Enqueue the entire message or leave the draft intact. Never truncate.
         if (controlQueue.size() + packets.size() > 64) {
+            SetPropW(textInput, L"MyCastComposerSend", reinterpret_cast<HANDLE>(5));
             SetWindowTextW(inputHint, L"送信待ちです。少し待って、もう一度送信してください");
             return false;
         }
         controlQueue.insert(controlQueue.end(), packets.begin(), packets.end());
     }
+    SetPropW(textInput, L"MyCastComposerSend", reinterpret_cast<HANDLE>(6));
     SetWindowTextW(textInput, L"");
     SetWindowTextW(inputHint, L"入力・変換 → Enterで送信（Android側で入力欄を選び、遠隔操作を許可してください）");
     SetFocus(textInput);
