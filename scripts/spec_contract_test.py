@@ -219,7 +219,9 @@ print("V030 CTRL-WHEEL UP=ZOOM IN, DOWN=ZOOM OUT CONTRACT PASS")
 # may be replaced by this presentation-only change.
 assert 'private lateinit var setupOverlay: ScrollView' in activity
 assert 'private fun refreshPresentation()' in activity
-assert 'setupOverlay.visibility = if (uvcConnected) View.GONE else View.VISIBLE' in activity
+assert 'setupOverlay.visibility = if (showSettings) View.VISIBLE else View.GONE' in activity
+assert 'if (next.action == Intent.ACTION_MAIN) settingsRequested = true' in activity
+assert 'UVC接続検出: 映像を準備中' in activity
 assert 'setup.addView(setupAction("📺 Windows受信機を探す")' in activity
 assert 'setup.addView(setupAction("📱 Android画面の共有を許可")' in activity
 assert 'setupRemoteButton = setupAction(' in activity
