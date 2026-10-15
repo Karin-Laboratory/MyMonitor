@@ -6,7 +6,7 @@ https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.28
 - `mymonitor029.apk`: Android (in-place update from v028 using the same persistent build signing key)
 - `mycastreceiver029.exe`: native Windows x64 (unsigned; runs standalone)
 
-Install **both** v029 components together. The new Android MMC6 video/source protocol is not understood by the old v028 Windows executable.
+Upgrade **both** components to v029 for the complete wheel fix. MMC6 is unchanged from v028, but the new Android gesture scheduler is needed to prevent successive pinches cancelling each other.
 
 ### Windows remote control
 To control the Pixel 10a, grant the MyMonitor accessibility service in Android Settings, start phone screen casting, tap Android 遠隔操作 to arm the session, then press Alt+R in Windows. UVC cannot be remotely controlled. Side Back sends Android Home, side Forward sends Android Back. Right click also sends Android Back.
