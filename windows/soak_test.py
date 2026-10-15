@@ -16,11 +16,14 @@ GOOD = struct.pack("!I", len(JPEG)) + JPEG
 BAD_IMAGE = b"not-a-jpeg" * 10
 BAD = struct.pack("!I", len(BAD_IMAGE)) + BAD_IMAGE
 u = ctypes.WinDLL("user32")
+u.GetPropW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+u.GetPropW.restype = ctypes.c_size_t
+
 u.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
 u.FindWindowW.restype = ctypes.c_void_p
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
 u.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
-process = subprocess.Popen([str(Path("mycastreceiver030.exe").resolve())])
+process = subprocess.Popen([str(Path("mycastreceiver031.exe").resolve())])
 s = None
 hwnd = None
 
@@ -56,10 +59,10 @@ try:
     for _ in range(50):
         u.GetWindowTextW(hwnd, title, 256)
         if ("1920 x 1080" in title.value and
-            f"skipped {bad_count} bad frames" in title.value): break
+            u.GetPropW(hwnd, "MyCastRejectedFrames") == bad_count): break
         time.sleep(.1)
     assert "1920 x 1080" in title.value, f"Frame lost: {title.value}"
-    assert f"skipped {bad_count} bad frames" in title.value, title.value
+    assert u.GetPropW(hwnd, "MyCastRejectedFrames") == bad_count, title.value
     elapsed = time.monotonic() - start
     assert elapsed >= 120, f"Soak ran too quickly: {elapsed}"
     print(f"RELIABILITY SOAK PASS: {frames} packets / {bad_count} corrupt images / "

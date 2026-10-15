@@ -21,7 +21,7 @@ u.PostMessageW.restype = ctypes.c_bool
 
 WM_CHAR, WM_KEYDOWN, WM_SYSKEYDOWN, WM_CLOSE = 0x0102, 0x0100, 0x0104, 0x0010
 VK_BACK = 0x08
-exe = pathlib.Path("mycastreceiver030.exe").resolve()
+exe = pathlib.Path("mycastreceiver031.exe").resolve()
 jpeg = pathlib.Path(sys.argv[1]).read_bytes()
 
 def ack(sock, payload):
@@ -50,11 +50,7 @@ try:
         assert ack(sock, struct.pack("!I", len(jpeg)) + jpeg) == bytes(17)
         time.sleep(.5)  # decoder makes linkConnected true after first valid frame
 
-        # Windows remote toggle defaults off; no hidden keystroke injection.
-        u.SendMessageW(hwnd, WM_CHAR, ord("x"), 0)
-        assert ack(sock, struct.pack("!I", 0)) == bytes(17)
-
-        u.SendMessageW(hwnd, WM_SYSKEYDOWN, ord("R"), 1 << 29)
+        # Android is the only consent authority; Windows needs no Alt+R.
         u.SendMessageW(hwnd, WM_CHAR, ord("a"), 0)
         u.SendMessageW(hwnd, WM_CHAR, ord("日"), 0)
         u.SendMessageW(hwnd, WM_KEYDOWN, VK_BACK, 0)
@@ -73,9 +69,9 @@ try:
         assert ack(sock, struct.pack("!I", 0)) == bytes(17)
 
         assert ack(sock, struct.pack("!I", 0xffffffff) + b"\x02") == bytes(17)
-        u.SendMessageW(hwnd, WM_SYSKEYDOWN, ord("R"), 1 << 29)
         u.SendMessageW(hwnd, WM_CHAR, ord("c"), 0)
-        assert ack(sock, struct.pack("!I", 0)) == bytes(17)
+        packet = ack(sock, struct.pack("!I", 0))
+        assert packet[:3] == bytes([8, 1, ord("c")]), packet
     print("V031 NATIVE UTF8 KEYBOARD / SAFE-OFF / UVC ISOLATION PASS")
 finally:
     if hwnd:

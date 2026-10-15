@@ -21,12 +21,15 @@ user32.FindWindowW.restype = ctypes.c_void_p
 user32.GetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
 user32.PostMessageW.argtypes = (ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t)
 
+user32.GetPropW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+user32.GetPropW.restype = ctypes.c_size_t
+
 def title(hwnd):
     buf = ctypes.create_unicode_buffer(512)
     user32.GetWindowTextW(hwnd, buf, len(buf))
     return buf.value
 
-proc = subprocess.Popen([str(Path("mycastreceiver030.exe").resolve())])
+proc = subprocess.Popen([str(Path("mycastreceiver031.exe").resolve())])
 hwnd = None
 try:
     for _ in range(150):
@@ -50,12 +53,12 @@ try:
         assert sock.recv(1) == b"\x06"
         for _ in range(60):
             caption = title(hwnd)
-            decoded = re.search(r"decoded (\d+)", caption)
-            if "1920 x 1080" in caption and decoded and int(decoded.group(1)) > 0:
+            decoded = user32.GetPropW(hwnd, "MyCastDecodedFrames")
+            if "1920 x 1080" in caption and decoded > 0:
                 break
             time.sleep(.1)
         assert "1920 x 1080" in caption and "decode " in caption and "draw " in caption, caption
-        assert decoded and int(decoded.group(1)) > 0, caption
+        assert decoded > 0, caption
         assert "reconnecting" not in caption, caption
         assert proc.poll() is None, "Windows receiver crashed during burst"
     median = statistics.median(times)

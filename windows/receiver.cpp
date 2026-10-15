@@ -65,7 +65,7 @@ static SOCKET discoverySocket = INVALID_SOCKET;
 static std::thread discoveryWorker;
 static std::mutex lockSocket;
 static std::thread worker;
-static std::atomic<bool> remoteControlEnabled{false};
+static std::atomic<bool> remoteControlEnabled{true};
 static std::mutex controlMutex;
 static std::vector<std::array<unsigned char,17>> controlQueue;
 static POINT dragStart{};
@@ -448,7 +448,7 @@ static void receiveLoop() {
             closesocket(s);
             peer = INVALID_SOCKET;
         }
-        remoteControlEnabled.store(false);
+        remoteControlEnabled.store(true);
         { std::lock_guard<std::mutex> guard(controlMutex); controlQueue.clear(); }
         updateLink(false);
     }
@@ -556,7 +556,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         }
         // Do not forward Windows shortcuts such as Alt+R or F11. Keyboard
         // actions apply only while Android itself has been opted into control.
-        // Windows Alt+R remains an additional local emergency-off control.
+        // Android remains the sole authority for granting remote input.
         if (remoteControlEnabled.load() && linkConnected.load() &&
             streamSource.load() == 2) {
             int key = 0;
@@ -603,46 +603,28 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         // and formatting diagnostics 30 times a second adds UI contention.
         static ULONGLONG lastTitleUpdate = 0;
         const ULONGLONG now = GetTickCount64();
-        if (now - lastTitleUpdate >= 1000) {
+        if (w == 1 || now - lastTitleUpdate >= 1000) {
             lastTitleUpdate = now;
-            std::wstring title = L"My Cast Receiver 030";
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            std::wstring title = L"My Cast Receiver 031 | ";
+            title += linkConnected.load() ? L"Android接続中" : L"Android未接続・接続待機中";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);
-                if (picture) title += L" - " + std::to_wstring(picture->width) +
-                    L" x " + std::to_wstring(picture->height);
+                if (picture && linkConnected.load()) {
+                    title += L" | 映像 " + std::to_wstring(picture->width) + L" x " + std::to_wstring(picture->height);
+                    const double scale = (std::min)(double(client.right)/picture->width, double(client.bottom)/picture->height);
+                    title += L" | 表示 " + std::to_wstring(int(picture->width * scale)) + L" x " + std::to_wstring(int(picture->height * scale));
+                }
             }
-            if (!linkConnected.load()) title += L" [reconnecting / last frame]";
-            title += remoteControlEnabled.load() ? L" [Remote ON: Alt+R]" : L" [Remote OFF: Alt+R]";
-            const auto rejected = rejectedFrames.load();
-            if (rejected) title += L" [skipped " + std::to_wstring(rejected) + L" bad frames]";
-            title += L" [rx " + std::to_wstring(lastReceiveMs.load()) +
-                L"ms, decode " + std::to_wstring(lastDecodeMs.load()) +
-                L"ms, draw " + std::to_wstring(lastPaintMs.load()) +
-                L"ms, decoded " + std::to_wstring(decodedFrames.load()) +
-                L", dropped " + std::to_wstring(droppedFrames.load()) + L"]";
+            title += L" | ウィンドウ " + std::to_wstring(client.right) + L" x " + std::to_wstring(client.bottom);
+            SetPropW(hwnd, L"MyCastDecodedFrames", reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(decodedFrames.load())));
+            SetPropW(hwnd, L"MyCastRejectedFrames", reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(rejectedFrames.load())));
             SetWindowTextW(hwnd, title.c_str());
         }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
-    case WM_SYSKEYDOWN:
-        if (w == 'R' && ((static_cast<unsigned long long>(l) & (1ULL << 29)) ||
-                         (GetKeyState(VK_MENU)&0x8000))) {
-            // Holding Alt+R repeats WM_SYSKEYDOWN; toggle only for initial press.
-            if ((static_cast<unsigned long long>(l) & (1ULL << 30)) == 0) {
-                const bool enabledNow = !remoteControlEnabled.load();
-                remoteControlEnabled.store(enabledNow);
-                if (!enabledNow) {
-                    // Old gestures must not execute after input is re-enabled.
-                    clearPendingPinch(hwnd);
-                    std::lock_guard<std::mutex> guard(controlMutex);
-                    controlQueue.clear();
-                }
-                queueRefresh();
-            }
-            return 0;
-        }
-        break;
     case WM_LBUTTONDOWN:
         if (remoteControlEnabled.load() && GetTickCount64()-lastTouchMs > 700) {
             dragStart={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
@@ -760,7 +742,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             frame = picture;
         }
         if (clientW > 0 && clientH > 0) {
-            if (frame && frame->bitmap && frame->width && frame->height) {
+            if (linkConnected.load() && frame && frame->bitmap && frame->width && frame->height) {
                 const double scale = (std::min)(double(clientW)/frame->width, double(clientH)/frame->height);
                 const int w = static_cast<int>(frame->width * scale);
                 const int h = static_cast<int>(frame->height * scale);
@@ -795,9 +777,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                 FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, RGB(210,210,210));
-                const wchar_t* text = L"My Cast Receiver 030\nWaiting on TCP 57007\n\n"
-                    L"Android: auto discovery or IPv4 + port 57007\n"
-                    L"OBS: Window Capture -> My Cast Receiver\nFull HD / Screen + audio / UVC";
+                const wchar_t* text = L"Android未接続\n\nスマートフォンでMyMonitorを起動してください。\n同じWi-Fiに接続すると、自動で接続します。\n\nAndroid画面を映すには、スマートフォンで画面共有を許可してください。\nF11：全画面表示・解除";
                 DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_WORDBREAK);
             }
             if (!linkConnected.load()) {
@@ -807,7 +787,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
                 DeleteObject(dim);
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, RGB(255, 221, 137));
-                DrawTextW(dc, L"Connection lost - waiting for automatic reconnect", -1,
+                DrawTextW(dc, L"Android未接続・自動接続を待っています", -1,
                     &label, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
             }
         }
@@ -823,7 +803,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
         }
         if (w == 15) queueRefresh(); // periodic diagnostics and disconnected UI
         return 0;
-    case WM_SIZE: InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    case WM_SIZE: SendMessageW(hwnd, WM_APP, 1, 0); InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case WM_CLOSE: clearPendingPinch(hwnd); KillTimer(hwnd, 15); DestroyWindow(hwnd); return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
@@ -836,7 +816,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_port = htons(57007); addr.sin_addr.s_addr = INADDR_ANY;
     if (listener == INVALID_SOCKET || bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) || listen(listener, 1)) {
-        MessageBox(nullptr, L"Cannot listen on TCP 57007. Close another receiver and retry.", L"My Cast Receiver", MB_ICONERROR);
+        MessageBox(nullptr, L"接続を待ち受けできません。起動済みのMy Cast Receiverを閉じて、もう一度起動してください。", L"My Cast Receiver", MB_ICONERROR);
         if(listener != INVALID_SOCKET) closesocket(listener);
         GdiplusShutdown(token); WSACleanup(); return 1;
     }

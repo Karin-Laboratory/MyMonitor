@@ -148,8 +148,8 @@ class MainActivity : AppCompatActivity() {
                 topMargin = (8 * dp).toInt()
             }
         }
-        setup.addView(setupAction("📺 Windows受信機を探す") { discoverWindows() })
-        setup.addView(setupAction("📱 Android画面の共有を許可") {
+        setup.addView(setupAction("📺 Windowsアプリを探す") { discoverWindows() })
+        setup.addView(setupAction("📱 Android画面をWindowsに映す") {
             if (StreamHub.selectedHost == null) discoverWindows()
             else beginScreenConsent()
         })
@@ -163,6 +163,15 @@ class MainActivity : AppCompatActivity() {
             } else moveTaskToBack(true)
         }
         setup.addView(setupReturnButton)
+        setup.addView(setupAction("MyMonitorを終了") {
+            startService(Intent(this, ScreenStreamService::class.java).apply {
+                action = ScreenStreamService.ACTION_EXIT
+            })
+        }.apply {
+            setTextColor(Color.WHITE)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xffb3261e.toInt())
+            (layoutParams as LinearLayout.LayoutParams).topMargin = (28 * dp).toInt()
+        })
         setupOverlay = ScrollView(this).apply {
             setBackgroundColor(0xff121b29.toInt())
             setFillViewport(true)
@@ -259,20 +268,20 @@ class MainActivity : AppCompatActivity() {
         setupOverlay.visibility = if (showSettings) View.VISIBLE else View.GONE
         if (!showSettings) return
         val receiver = StreamHub.selectedHost?.let { "接続先: $it" }
-            ?: "Windows受信機: 検索中 / 未接続"
+            ?: "Windows: 未接続（Windowsアプリを起動してください）"
         val projection = if (ScreenStreamService.projectionActive) {
             if (StreamHub.sender.isConnected()) "Android画面: Windowsへ転送中"
-            else "Android画面: 共有中（受信機を待機中）"
-        } else "Android画面: 共有の許可待ち"
+            else "Android画面: Windowsへの接続待ち"
+        } else "Android画面: 転送するには画面共有を許可してください"
         val remote = when {
             !RemoteControlService.active() -> "未設定（ユーザー補助の許可が必要）"
-            StreamHub.controlArmed -> "このセッションで許可中"
-            else -> "許可OFF"
+            StreamHub.controlArmed -> "Windowsから操作できます"
+            else -> "停止中"
         }
         val usb = when {
-            uvcReady -> "UVC映像: 表示中 / Windowsへ自動転送"
-            hasUvcDevice() -> "UVC接続検出: 映像を準備中"
-            else -> "UVC: 未接続（Android画面を利用）"
+            uvcReady -> "USBカメラ: 映像を表示中"
+            hasUvcDevice() -> "USBカメラ: 映像を準備中"
+            else -> "USBカメラ: 未接続"
         }
         setupStatus.text = "$usb\n$receiver\n$projection\n遠隔操作: $remote"
         setupReturnButton.text = if (uvcReady) "← UVCモニターへ戻る"
@@ -295,7 +304,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             StreamHub.setControlArmed(!StreamHub.controlArmed)
             showStatus(if (StreamHub.controlArmed)
-                "遠隔操作の許可ON（WindowsでAlt+R）" else "遠隔操作の許可OFF")
+                "Windowsからの遠隔操作を許可しました" else "Windowsからの遠隔操作を停止しました")
         }
         refreshPresentation()
     }
@@ -678,7 +687,7 @@ class MainActivity : AppCompatActivity() {
     private fun discoverWindows() {
         if (discoveringWindows) return
         discoveringWindows = true
-        showStatus("LAN内のMy Cast Receiverを検索中…")
+        showStatus("同じネットワークのWindowsアプリを探しています…")
         receiverChooserShown = true
         Thread({
             val results = try { StreamHub.scanAll() } catch (_: Exception) { emptyList() }
@@ -688,14 +697,14 @@ class MainActivity : AppCompatActivity() {
                 refreshPresentation()
                 when (results.size) {
                     0 -> {
-                        showStatus("検証できるWindows受信機がありません。EXEを起動するかIPを入力")
+                        showStatus("Windowsアプリが見つかりません。同じWi-FiでMy Cast Receiverを起動してください")
                         windowsSettings()
                     }
                     1 -> {
                         val receiver = results.single()
                         StreamHub.enable()
                         StreamHub.connectVerified(receiver)
-                        showStatus("受信機を二重確認済み: " + receiver.name + " (" + receiver.host + ")")
+                        showStatus("Windowsアプリが見つかりました: " + receiver.name + " (" + receiver.host + ")")
                         if (!hasUvcDevice() && !ScreenStreamService.projectionActive) beginScreenConsent()
                     }
                     else -> {
@@ -731,13 +740,13 @@ class MainActivity : AppCompatActivity() {
                 if (host.isEmpty() || number == null || number !in 1..65535)
                     showStatus("接続先とポートを確認してください")
                 else {
-                    showStatus("受信機を確認中: " + host)
+                    showStatus("Windowsアプリへの接続を確認しています: " + host)
                     StreamHub.enable()
                     StreamHub.connectManual(host, number) { verified ->
                         runOnUiThread {
                             if (isFinishing || isDestroyed) return@runOnUiThread
                             if (verified) {
-                                showStatus("受信機の実在を確認: " + host)
+                                showStatus("Windowsアプリが見つかりました: " + host)
                                 if (!hasUvcDevice() && !ScreenStreamService.projectionActive) beginScreenConsent()
                             } else showStatus("接続不可: " + host + " は My Cast Receiver と応答しません")
                         }
