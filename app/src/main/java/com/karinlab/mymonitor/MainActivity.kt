@@ -218,7 +218,7 @@ class MainActivity : AppCompatActivity() {
             val count = StreamHub.scanAndConnect()
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                    refreshPresentation()
+                refreshPresentation()
                 if (StreamHub.selectedHost != null && !hasUvcDevice() &&
                     !ScreenStreamService.projectionActive) beginScreenConsent()
                 else if (count > 1 && StreamHub.selectedHost == null &&
