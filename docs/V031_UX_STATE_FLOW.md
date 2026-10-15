@@ -46,7 +46,7 @@ stateDiagram-v2
     Settings --> AndroidScreenCast: Return to Android screen (background app)
 ```
 
-### Button semantics on settings surface (no UVC)
+### Button semantics on settings surface (no UVC, or launcher re-entry during UVC)
 
 | Control | Behavior |
 | --- | --- |
@@ -65,8 +65,9 @@ stateDiagram-v2
 
 ### v031 keyboard implementation boundaries
 
-- Existing MMC6 ACK has only a 17-byte remote-control command. Arbitrary UTF-8 Japanese input and composition require new framing and explicit compatibility handling; never break older v030 clients silently.
-- Use Android focused editable accessibility node for ordinary text editing. `ACTION_SET_TEXT` is *not* general hardware key injection; terminal keys, shortcuts, and password fields need separate design/test.
+- Candidate implements op=8 for 1..15 bytes of committed UTF-8 and op=9 for common editing keys in the original 17-byte MMC6 reverse ACK. Older Android clients ignore unknown operations; UVC remains excluded.
+- Windows receives committed Unicode from `WM_CHAR` and handles surrogate pairs. Android inserts via editable focused accessibility nodes using `ACTION_SET_TEXT` and `ACTION_SET_SELECTION`.
+- This is *not* general HID key injection. Terminal keystrokes, clipboard shortcuts, password fields and complex IME behavior require separate device testing.
 - Do not touch the v029 completed-gesture queue or existing UVC/recording/audio source lifecycles as part of keyboard work.
 - Keyboard actions must be opt-in through the same session gate and discarded on disconnect/lock/source switch.
 
@@ -77,9 +78,9 @@ stateDiagram-v2
 3. No USB, no receiver: settings remain usable; manual IP and discovery accessible.
 4. Screen casting then re-open app icon: same Activity is reused when possible; settings overlay appears and has functioning controls. Return to Android screen without stopping stream.
 5. UVC unplug/replug or screen rotation: existing preview priority and source switching unchanged; no stale fragment or doubled listener.
-6. Explicit Android remote authorization remains OFF by default after reconnect, source change, or projection loss.
-7. Existing Windows F11, Alt+R, wheel/pinch, low-latency audio and video and recording regressions pass.
-8. Confirm Android device behavior by hand; JVM and Windows CI do not validate physical USB or Android MediaProjection system UI.
+7. Explicit Android remote authorization remains OFF by default after reconnect, source change, or projection loss.
+8. Existing Windows F11, Alt+R, wheel/pinch, low-latency audio and video and recording regressions pass.
+9. Confirm Android device behavior by hand; JVM and Windows CI do not validate physical USB or Android MediaProjection system UI.
 
 ## Release discipline
 
