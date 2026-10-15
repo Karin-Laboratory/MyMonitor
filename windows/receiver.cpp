@@ -120,6 +120,60 @@ static void enqueueControl(HWND hwnd, int op, POINT from, POINT to, POINT second
     if (controlQueue.size() >= 64) controlQueue.erase(controlQueue.begin());
     controlQueue.push_back(data);
 }
+// Remote UTF-8 keyboard events use the same bounded 17-byte reverse ACK as
+// MMC6 gestures. Merge consecutive committed characters up to 15 bytes; each
+// received Unicode scalar is encoded whole so packets cannot split a codepoint.
+static void enqueueKeyboardText(const unsigned char* utf8, size_t length) {
+    if (!remoteControlEnabled.load() || !linkConnected.load() ||
+        streamSource.load() != 2 || length == 0 || length > 4) return;
+    std::lock_guard<std::mutex> guard(controlMutex);
+    if (!controlQueue.empty() && controlQueue.back()[0] == 8 &&
+        controlQueue.back()[1] + length <= 15) {
+        auto& tail = controlQueue.back();
+        std::memcpy(tail.data() + 2 + tail[1], utf8, length);
+        tail[1] = static_cast<unsigned char>(tail[1] + length);
+        return;
+    }
+    if (controlQueue.size() >= 64) return; // never replay unbounded text
+    std::array<unsigned char,17> pkt{};
+    pkt[0] = 8;
+    pkt[1] = static_cast<unsigned char>(length);
+    std::memcpy(pkt.data()+2, utf8, length);
+    controlQueue.push_back(pkt);
+}
+static void enqueueKeyboardCodepoint(std::uint32_t cp) {
+    if (cp < 0x20 || cp == 0x7f || cp > 0x10ffff ||
+        (cp >= 0xd800 && cp <= 0xdfff)) return;
+    unsigned char bytes[4]{};
+    size_t n = 0;
+    if (cp < 0x80) bytes[n++] = static_cast<unsigned char>(cp);
+    else if (cp < 0x800) {
+        bytes[n++] = static_cast<unsigned char>(0xc0 | (cp >> 6));
+        bytes[n++] = static_cast<unsigned char>(0x80 | (cp & 0x3f));
+    } else if (cp < 0x10000) {
+        bytes[n++] = static_cast<unsigned char>(0xe0 | (cp >> 12));
+        bytes[n++] = static_cast<unsigned char>(0x80 | ((cp >> 6) & 0x3f));
+        bytes[n++] = static_cast<unsigned char>(0x80 | (cp & 0x3f));
+    } else {
+        bytes[n++] = static_cast<unsigned char>(0xf0 | (cp >> 18));
+        bytes[n++] = static_cast<unsigned char>(0x80 | ((cp >> 12) & 0x3f));
+        bytes[n++] = static_cast<unsigned char>(0x80 | ((cp >> 6) & 0x3f));
+        bytes[n++] = static_cast<unsigned char>(0x80 | (cp & 0x3f));
+    }
+    enqueueKeyboardText(bytes, n);
+}
+static void enqueueKeyboardKey(int id) {
+    if (!remoteControlEnabled.load() || !linkConnected.load() ||
+        streamSource.load() != 2) return;
+    std::lock_guard<std::mutex> guard(controlMutex);
+    if (controlQueue.size() >= 64) return;
+    std::array<unsigned char,17> pkt{};
+    pkt[0] = 9;
+    pkt[1] = static_cast<unsigned char>(id);
+    controlQueue.push_back(pkt);
+}
+static wchar_t pendingHighSurrogate = 0;
+
 // One pinch gesture covers all wheel detents accumulated during 160ms.
 // Derive the stroke from the displayed image rectangle, not fixed pixels:
 // portrait phones, letterboxing, and window resizing all stay in bounds.
@@ -500,7 +554,49 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             }
             return 0;
         }
+        // Do not forward Windows shortcuts such as Alt+R or F11. Keyboard
+        // actions apply only while Android itself has been opted into control.
+        // Windows Alt+R remains an additional local emergency-off control.
+        if (remoteControlEnabled.load() && linkConnected.load() &&
+            streamSource.load() == 2) {
+            int key = 0;
+            switch (w) {
+            case VK_BACK: key = 1; break;
+            case VK_DELETE: key = 2; break;
+            case VK_RETURN: key = 3; break;
+            case VK_LEFT: key = 4; break;
+            case VK_RIGHT: key = 5; break;
+            case VK_HOME: key = 6; break;
+            case VK_END: key = 7; break;
+            }
+            if (key) { enqueueKeyboardKey(key); return 0; }
+        }
         break;
+    case WM_CHAR: {
+        // WM_CHAR delivers UTF-16 committed IME output, not composition
+        // keystrokes. Buffer surrogate pairs before UTF-8 encoding.
+        const std::uint32_t unit = static_cast<std::uint32_t>(w);
+        if (unit >= 0xd800 && unit <= 0xdbff) {
+            pendingHighSurrogate = static_cast<wchar_t>(unit);
+            return 0;
+        }
+        if (unit >= 0xdc00 && unit <= 0xdfff) {
+            if (pendingHighSurrogate) {
+                const std::uint32_t cp = 0x10000u +
+                    ((static_cast<std::uint32_t>(pendingHighSurrogate) - 0xd800u) << 10) +
+                    (unit - 0xdc00u);
+                pendingHighSurrogate = 0;
+                enqueueKeyboardCodepoint(cp);
+            }
+            return 0;
+        }
+        pendingHighSurrogate = 0;
+        if (unit >= 0x20 && unit != 0x7f) {
+            enqueueKeyboardCodepoint(unit);
+            return 0;
+        }
+        break;
+    }
     case WM_APP: {
         refreshPosted.store(false);
         // Frequent frames should only invalidate; modifying the window title
