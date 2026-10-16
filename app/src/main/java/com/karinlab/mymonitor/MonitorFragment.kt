@@ -534,33 +534,71 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     fun toggleRecording() {
         val c = camera
         if (recording) {
-            if (!stopping) { stopping = true; status("録画を書き込み中…"); c?.captureVideoStop() }
+            if (!stopping) {
+                stopping = true
+                status("録画ファイルを保存しています…")
+                c?.captureVideoStop()
+            }
             return
         }
-        if (!ready || c == null) { status("UVC映像未接続。USB確認から再試行"); return }
-        val output = destination("mp4")
-        status("映像のみのMP4録画を開始中…")
-        try { c.captureVideoStart(object : ICaptureCallBack {
-            override fun onBegin() {
-                recording = true; stopping = false
-                host()?.setRecording(true); status("● 録画中")
-            }
-            override fun onError(error: String?) {
-                recording = false; stopping = false
-                host()?.setRecording(false); status("録画エラー: ${error ?: "unknown"}")
-            }
-            override fun onComplete(path: String?) {
-                recording = false; stopping = false
-                host()?.setRecording(false)
-                val result = path?.let(::File) ?: output
-                if (result.exists() && result.length() > 0L) host()?.saveMedia(result, "video/mp4")
-                else status("録画ファイルが見つかりません")
-            }
-        }, output.absolutePath) } catch (e: Exception) {
-            recording = false; stopping = false
-            host()?.setRecording(false)
-            status("録画開始失敗: ${e.message}")
-            Log.e("MyMonitor-UVC", "Video capture start failed", e)
+        if (!ready || c == null) {
+            status("USB映像が接続されていません。接続を確認してください")
+            return
         }
+        if (recordingRequested) return
+        recordingRequested = true
+        val output = destination("mp4")
+        val withUac = c.isMicSupported() &&
+            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        status(if (withUac) "USB映像と音声の録画を準備しています…" else
+            "USB映像のみ録画します（音声入力が利用できません）")
+        // AUSBC's built-in MP4 muxer takes over the USB Audio Class endpoint.
+        // Release the independent live monitor before starting local recording.
+        uvcAudio?.stop()
+        retryHandler.postDelayed({
+            if (!ready || closing || camera !== c) {
+                recordingRequested = false
+                return@postDelayed
+            }
+            try {
+                c.captureVideoStart(object : ICaptureCallBack {
+                    override fun onBegin() {
+                        recordingRequested = false
+                        recording = true
+                        stopping = false
+                        host()?.setRecording(true)
+                        status(if (withUac) "● USB映像・音声を録画中" else "● USB映像を録画中")
+                    }
+                    override fun onError(error: String?) {
+                        recordingRequested = false
+                        recording = false
+                        stopping = false
+                        host()?.setRecording(false)
+                        status("録画できませんでした: ${error ?: "詳細不明"}")
+                        resumeUvcAudioAfterRecording()
+                    }
+                    override fun onComplete(path: String?) {
+                        recordingRequested = false
+                        recording = false
+                        stopping = false
+                        host()?.setRecording(false)
+                        val result = path?.let(::File) ?: output
+                        if (result.exists() && result.length() > 0L)
+                            host()?.saveMedia(result, "video/mp4")
+                        else status("録画ファイルが見つかりません")
+                        resumeUvcAudioAfterRecording()
+                    }
+                }, output.absolutePath)
+            } catch (e: Exception) {
+                recordingRequested = false
+                recording = false
+                stopping = false
+                host()?.setRecording(false)
+                status("録画を開始できませんでした: ${e.message}")
+                Log.e("MyMonitor-UVC", "UVC recording failed", e)
+                resumeUvcAudioAfterRecording()
+            }
+        }, 300L)
     }
 }
