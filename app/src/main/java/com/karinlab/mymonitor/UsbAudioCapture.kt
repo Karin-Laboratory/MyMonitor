@@ -82,7 +82,6 @@ class UsbAudioCapture(private val context: Context,
                 instance.addDataCallBack(sink)
                 if (!running.get() || generation != epoch) return@Thread
                 instance.startRecording()
-                onState("USBキャプチャの音声を利用しています")
                 Log.i("MyMonitor-UAC", "UAC capture started: $rate Hz, $channels channels, $bits bits")
             } catch (e: Exception) {
                 if (running.get() && generation == epoch) {
