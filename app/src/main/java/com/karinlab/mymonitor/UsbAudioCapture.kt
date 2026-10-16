@@ -55,6 +55,7 @@ class UsbAudioCapture(private val context: Context,
                 val bits = instance.bitResolution
                 if (channels !in 1..2 || bits !in listOf(8, 16))
                     throw IllegalStateException("UAC format $rate/$channels/$bits")
+                val hasAudio = AtomicBoolean(false)
                 val sink = UACAudioCallBack { pcm ->
                     if (!running.get() || generation != epoch || !StreamHub.uvcReady) return@UACAudioCallBack
                     val output = UacPcmAdapter.toStereo48k(pcm, rate, channels, bits)
