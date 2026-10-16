@@ -60,6 +60,8 @@ class UsbAudioCapture(private val context: Context,
                     if (!running.get() || generation != epoch || !StreamHub.uvcReady) return@UACAudioCallBack
                     val output = UacPcmAdapter.toStereo48k(pcm, rate, channels, bits)
                         ?: return@UACAudioCallBack
+                    if (hasAudio.compareAndSet(false, true))
+                        onState("USBキャプチャの音声を受信しています")
                     // The network sender has a 38,400 byte maximum per
                     // packet. Always split at 16-bit stereo frame boundaries.
                     var offset = 0
