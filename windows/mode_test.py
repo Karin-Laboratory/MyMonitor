@@ -6,7 +6,7 @@ import struct
 import subprocess
 import time
 
-exe = pathlib.Path("mycastreceiver033.exe").resolve()
+exe = pathlib.Path("mycastreceiver034.exe").resolve()
 assert exe.is_file(), exe
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 user32.FindWindowW.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
