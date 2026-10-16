@@ -74,7 +74,7 @@ assert "PowerManager.PARTIAL_WAKE_LOCK" in service
 assert "refreshPowerLock()" in service
 assert "onTaskRemoved(" in service
 assert "onTrimMemory(" in service
-assert 'versionCode 33' in file("app/build.gradle")
+assert 'versionCode 34' in file("app/build.gradle")
 print("V017 POWER/LIFECYCLE CONTRACTS RETAINED (v018 preview supersedes ratio check)")
 
 # v018: the UVC image-size decision belongs to the parent viewport exactly once.
@@ -88,7 +88,7 @@ assert "camera?.setRenderSize(" not in fragment
 assert "PreviewGeometry.centered(" in fragment
 assert "fun centered(" in preview_geometry
 assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
-assert "versionCode 33" in file("app/build.gradle")
+assert "versionCode 34" in file("app/build.gradle")
 print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
 
 # v019 audio lifecycle and Windows binary provenance.
@@ -106,7 +106,7 @@ assert 'playbackAudioAllowed' in hub
 assert "waveOutReset(device)" in file("windows/audio_receiver.h")
 assert "VERSIONINFO" in file("windows/receiver.rc")
 assert "msvc" in file(".github/workflows/build-apk.yml").lower()
-assert 'versionCode 33' in file("app/build.gradle")
+assert 'versionCode 34' in file("app/build.gradle")
 print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")
 assert "private var opening = false" in fragment
 assert "if (opening || closing || camera != null || !physicalPresent(device)) return" in fragment
@@ -140,7 +140,7 @@ assert "reconcilePhysicalUsb()" in activity and "usbReconcileTask" in activity
 assert "staleCallbacksMustNotChangeNewMonitorState" in tests
 assert "spuriousDisconnectMustNotDestroyActiveCamera" in tests
 assert "nativeFailureRetriesAreBounded" in tests
-assert "versionName '0.33'" in file("app/build.gradle")
+assert "versionName '0.34'" in file("app/build.gradle")
 assert "retryDelayMs(" in policy
 assert "MyCastReceiver.exe" not in file(".github/workflows/build-apk.yml")
 print("V023 RC USB EVENT EPOCH / TIMEOUT / RELEASE CONTRACT PASS")
@@ -242,3 +242,23 @@ assert 'streamSource.load() != 2' in receiver
 assert 'if (inputArmed) 120L else 1500L' in sender
 assert 'keyboard_test.py' in file(".github/workflows/build-apk.yml")
 print("V033 UTF-8 KEYBOARD ACK FRAMING, SCREEN-ONLY AND SAFE-OFF CONTRACT PASS")
+
+# v034 USB HDMI audio: actual native UAC only; no phone microphone fallback.
+uac=file("app/src/main/java/com/karinlab/mymonitor/UsbAudioCapture.kt")
+adapter=file("app/src/main/java/com/karinlab/mymonitor/UacPcmAdapter.kt")
+assert "UACAudioHandler.createHandler(block)" in uac
+assert "UacPcmAdapter.toStereo48k" in uac
+assert "StreamHub.offerUvcAudio(chunk, count)" in uac
+assert "AudioTrack.Builder()" in uac
+assert "CameraRequest.AudioSource.SOURCE_DEV_MIC" in fragment
+assert "CameraRequest.AudioSource.SOURCE_AUTO" not in fragment
+assert "private fun resumeUvcAudioAfterRecording()" in fragment
+assert "uvcAudio?.stop()" in fragment
+assert "private var uvcAudioPermissionAsked" in activity
+assert "requestUvcAudioPermission()" in activity
+assert "fun offerUvcAudio(pcm: ByteArray, size: Int)" in hub
+assert "source() == CapturePolicy.Source.UVC" in hub
+assert "if ((source() == CapturePolicy.Source.SCREEN || source() == CapturePolicy.Source.UVC) && playbackAudioAllowed)" in hub
+assert "fun toStereo48k" in adapter
+assert (root / "app/src/test/java/com/karinlab/mymonitor/UacPcmAdapterTest.kt").exists()
+print("V034 USB UAC PCM / LOCAL MP4 / NO PHONE MIC FALLBACK CONTRACT PASS")
