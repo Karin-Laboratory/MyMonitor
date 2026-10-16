@@ -359,7 +359,12 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     trace("OPENED")
                     status("UVC映像 ${width}×${height}" + if (width == 1920 && height == 1080) " / Full HD" else " / 機器が選択した解像度")
                 }
-                ICameraStateCallBack.State.CLOSED -> { opening = false; camera = null; ready = false; StreamHub.setUvcReady(false); status("UVCクローズ") }
+                ICameraStateCallBack.State.CLOSED -> {
+                    uvcAudio?.stop()
+                    uvcBlock = null
+                    opening = false; camera = null; ready = false
+                    StreamHub.setUvcReady(false); status("USBカメラが切断されました")
+                }
                 ICameraStateCallBack.State.ERROR -> {
                     status("UVCエラー: ${msg ?: "unknown"}")
                     val failedDeviceId = currentDeviceId
