@@ -1,18 +1,16 @@
-# MyMonitor / MyCast Receiver v030
+# MyMonitor / MyCast Receiver v034
 
-After CI passes, download both updated binaries:
-https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.28
+After GitHub Actions succeeds, download from:
+https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.34
 
-- `mymonitor030.apk`: Android (in-place update from v029 using the same persistent build signing key)
-- `mycastreceiver030.exe`: native Windows x64 (unsigned; runs standalone)
+- **mymonitor034.apk**: Android, in-place upgrade from v033 with the existing GitHub Actions signing identity.
+- **mycastreceiver034.exe**: Windows x64 native receiver (single unsigned EXE).
+- **SHA256SUMS.txt**: checksums for both binaries.
 
-Upgrade the Windows receiver to v030 for the corrected wheel direction; the Android v030 APK is also provided for matching version numbers. The v029 Android APK remains protocol-compatible with Windows v030. MMC6 is unchanged from v028, but the new Android gesture scheduler is needed to prevent successive pinches cancelling each other.
+## v034: sound from your HDMI capture adapter
 
-### Windows remote control
-To control the Pixel 10a, grant the MyMonitor accessibility service in Android Settings, start phone screen casting, tap Android 遠隔操作 to arm the session, then press Alt+R in Windows. UVC cannot be remotely controlled. Side Back sends Android Home, side Forward sends Android Back. Right click also sends Android Back.
+UVC video and **USB Audio Class (UAC)** sound can play on the phone and stream together to Windows over the existing 48k PCM audio TCP channel (57009). Android Settings includes a toggle for local phone-speaker monitoring; Windows playback remains enabled independently. Android RECORD_AUDIO permission is required. If the adapter offers only UVC video, picture stays available without sound. Phone-microphone fallback is **never** used.
 
-Ctrl+wheel **up**: pinch out (zoom in); Ctrl+wheel **down**: pinch in (zoom out). Rapid detents now batch within 160ms, and the Android Accessibility service waits for gesture completion before sending another. High-resolution half-detent wheel values accumulate. Hardware zoom behavior must still be verified on the phone.
+Local USB MP4 files can contain the device's UAC audio. Live USB sound may pause on Windows while recording a local MP4 to avoid two simultaneous native USB audio claims; audio resumes after recording ends.
 
-F11 toggles fullscreen and returns to the previously saved window placement. On an actual UVC-source switch, Windows automatically selects a 1920x1080 client area if it fits on the current display, otherwise sizes to the available work area. When the display is physically 1920x1080 it enters borderless fullscreen automatically. Phone-screen rotation by itself never triggers UVC resizing.
-
-Audio/video ports and discovery remain unchanged. v028 USB hotplug and low-latency pathways are preserved. The receiver is unsigned, and remote control is not cryptographically paired; trusted local networks only. Hardware checks remain necessary.
+See [SPEC_FIX_034.md](SPEC_FIX_034.md) for verification details. Android screen audio, TCP discovery, remote control, gesture queue, screen lock recovery and Windows UI from v033 remain in place. Windows EXE has no code signature; use only trusted LAN connections. A physical UAC device is required to validate sound end-to-end.
