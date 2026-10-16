@@ -11,7 +11,7 @@ import secrets
 import time
 from pathlib import Path
 
-exe = str(Path("mycastreceiver033.exe").resolve())
+exe = str(Path("mycastreceiver034.exe").resolve())
 proc = subprocess.Popen([exe])
 def read4(sock):
     data = b""
@@ -56,9 +56,18 @@ try:
 
     nonce = secrets.token_hex(16)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.settimeout(2)
-        sock.sendto(("MYMONITOR_DISCOVER_V2|" + nonce).encode("ascii"), ("127.0.0.1",57008))
-        reply, address = sock.recvfrom(256)
+        sock.settimeout(.5)
+        reply = None
+        address = None
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            try:
+                sock.sendto(("MYMONITOR_DISCOVER_V2|" + nonce).encode("ascii"), ("127.0.0.1",57008))
+                reply, address = sock.recvfrom(256)
+                break
+            except (ConnectionResetError, socket.timeout):
+                time.sleep(.15)
+        assert reply is not None and address is not None, "Receiver UDP discovery did not start"
         prefix = ("MYCAST_RECEIVER_V2|" + nonce + "|57007|").encode("ascii")
         assert reply.startswith(prefix), f"Receiver must echo exact nonce: {reply!r}"
         assert len(reply) > len(prefix), "Missing Windows receiver identity"

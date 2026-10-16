@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     }
     private var requestingProjection = false
     private var audioPermissionAsked = false
+    private var uvcAudioPermissionAsked = false
     private var pendingUvcRecord = false
     private var receiverChooserShown = false
     private var wasUvcEverReady = false
@@ -164,6 +165,15 @@ class MainActivity : AppCompatActivity() {
                 startService(Intent(this@MainActivity, ScreenStreamService::class.java).apply {
                     action = ScreenStreamService.ACTION_SOURCE_CHANGED
                 })
+            }
+        })
+        setup.addView(android.widget.CheckBox(this).apply {
+            text = "USBキャプチャの音をスマホでも再生"
+            setTextColor(Color.WHITE)
+            isChecked = prefs.getBoolean("uvcAudioMonitor", true)
+            setOnCheckedChangeListener { _, enabled ->
+                prefs.edit().putBoolean("uvcAudioMonitor", enabled).apply()
+                if (::monitor.isInitialized) monitor.refreshUvcAudioMonitor()
             }
         })
         setup.addView(setupAction("⚙ Windows接続先を手動設定") { windowsSettings() })
@@ -294,7 +304,12 @@ class MainActivity : AppCompatActivity() {
             hasUvcDevice() -> "USBカメラ: 映像を準備中"
             else -> "USBカメラ: 未接続"
         }
-        setupStatus.text = "$usb\n$receiver\n$projection\n遠隔操作: $remote"
+        val uac = if (uvcReady) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED) "USB音声: 対応機器から自動入力"
+            else "USB音声: マイクのアクセス許可が必要"
+        } else "USB音声: UVC接続時に利用"
+        setupStatus.text = "$usb\n$uac\n$receiver\n$projection\n遠隔操作: $remote"
         setupReturnButton.text = if (uvcReady) "← UVCモニターへ戻る"
             else "← Android画面へ戻る"
         setupRemoteButton.text = when {
@@ -374,6 +389,20 @@ class MainActivity : AppCompatActivity() {
                 PackageManager.PERMISSION_GRANTED) {
             notificationPermissionRequested = true
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 103)
+        }
+    }
+
+    /** Request sound permission only when the attached UVC device has UAC.
+     * Camera preview must keep working if the user declines microphone access.
+     */
+    fun requestUvcAudioPermission() {
+        if (!::monitor.isInitialized || !StreamHub.uvcReady) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED) {
+            monitor.startUvcAudio()
+        } else if (!uvcAudioPermissionAsked) {
+            uvcAudioPermissionAsked = true
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 104)
         }
     }
 
@@ -550,6 +579,11 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == 102) {
             // Screen capture still works without audio, but playback capture needs RECORD_AUDIO.
             beginScreenConsent()
+        }
+        if (requestCode == 104) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                if (::monitor.isInitialized) monitor.startUvcAudio()
+            } else showStatus("USB音声へのアクセスが許可されていません。映像は利用できます")
         }
         if (requestCode == 103 && grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
             showStatus("通知が無効です。通知から停止するには設定で許可してください")

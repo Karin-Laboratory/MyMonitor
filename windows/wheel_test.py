@@ -32,7 +32,7 @@ WM_SYSKEYDOWN = 0x0104
 WM_CLOSE = 0x0010
 MK_CONTROL = 0x0008
 WHEEL_DELTA = 120
-exe = pathlib.Path("mycastreceiver033.exe").resolve()
+exe = pathlib.Path("mycastreceiver034.exe").resolve()
 jpeg = pathlib.Path(sys.argv[1]).read_bytes()
 
 def read_all(sock, count):

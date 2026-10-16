@@ -16,7 +16,7 @@ u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctyp
 u.SendMessageW.restype = ctypes.c_ssize_t
 u.PostMessageW.argtypes = u.SendMessageW.argtypes
 u.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
-process = subprocess.Popen([str(Path('mycastreceiver033.exe').resolve())])
+process = subprocess.Popen([str(Path('mycastreceiver034.exe').resolve())])
 try:
     deadline = time.monotonic() + 15
     hwnd = None
@@ -34,10 +34,21 @@ try:
     rc = RECT()
     assert u.GetClientRect(hwnd, ctypes.byref(rc))
     assert (rc.right - rc.left, rc.bottom - rc.top) == (1920,1080), f'client size: {rc.right} x {rc.bottom}'
+    # A native Windows receiver displays its window slightly before its UDP
+    # discovery worker binds. Some CI runners return WSAECONNRESET (10054)
+    # when an early UDP probe hits an unopened localhost port. Retry startup,
+    # but still require the exact receiver proof before proceeding.
+    reply = None
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-        udp.settimeout(2)
-        udp.sendto(b'MYMONITOR_DISCOVER_V1', ('127.0.0.1', 57008))
-        reply, _ = udp.recvfrom(128)
+        udp.settimeout(.4)
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            try:
+                udp.sendto(b'MYMONITOR_DISCOVER_V1', ('127.0.0.1', 57008))
+                reply, _ = udp.recvfrom(128)
+                break
+            except (ConnectionResetError, socket.timeout):
+                time.sleep(.15)
         assert reply == b'MYCAST_RECEIVER_V1|57007', f'Discovery reply: {reply!r}'
     print('LAN discovery + 1920x1080 client area: PASS')
     jpeg = Path(sys.argv[1]).read_bytes()

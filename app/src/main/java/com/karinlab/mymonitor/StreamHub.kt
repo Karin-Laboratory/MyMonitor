@@ -220,7 +220,7 @@ object StreamHub {
             activeHost = host
             activePort = selectedPort
         }
-        if (source() == CapturePolicy.Source.SCREEN && playbackAudioAllowed) {
+        if ((source() == CapturePolicy.Source.SCREEN || source() == CapturePolicy.Source.UVC) && playbackAudioAllowed) {
             if (!audio.isRunning()) {
                 audio.awaitStopped()
                 audio.start(host!!)
@@ -263,6 +263,11 @@ object StreamHub {
     fun offerScreen(jpeg: ByteArray) {
         if (enabled && source() == CapturePolicy.Source.SCREEN)
             sender.offerJpeg(ByteBuffer.wrap(jpeg))
+    }
+    /** Stream USB Audio Class PCM only while the physical UVC video is active. */
+    fun offerUvcAudio(pcm: ByteArray, size: Int) {
+        if (enabled && playbackAudioAllowed && source() == CapturePolicy.Source.UVC)
+            audio.offer(pcm, size)
     }
     fun offerAudio(pcm: ByteArray, size: Int) {
         if (enabled && source() == CapturePolicy.Source.SCREEN) audio.offer(pcm, size)
