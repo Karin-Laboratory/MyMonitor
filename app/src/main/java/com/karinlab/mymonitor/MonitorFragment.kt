@@ -403,6 +403,13 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         capture.start(block)
     }
 
+    fun refreshUvcAudioMonitor() {
+        uvcAudio?.stop()
+        retryHandler.postDelayed({
+            if (ready && !recording && !recordingRequested && !closing) startUvcAudio()
+        }, 350L)
+    }
+
     private fun resumeUvcAudioAfterRecording() {
         host()?.runOnUiThread {
             retryHandler.postDelayed({
