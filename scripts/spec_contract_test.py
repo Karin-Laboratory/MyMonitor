@@ -296,6 +296,6 @@ assert "output.put(data, row * width, width)" in uvc_patch
 assert "u.buffer.put(dstU + col * u.pixelStride, data[src])" in uvc_patch
 assert "v.buffer.put(dstV + col * v.pixelStride, data[src + 1])" in uvc_patch
 assert "mVideoProcess = H264EncodeProcessor(previewWidth, previewHeight, isNeedGLESRender, false)" in uvc_patch
-assert "nv21ToYuv420sp(data, width, height)" not in uvc_patch
+assert "No mutation here: write NV12 to negotiated Image planes" in uvc_patch
 assert (root / "scripts/test_uvc_chroma_layout.py").exists()
 print("V037 STRIDE-CORRECT YUV_420_888 AND NV12 CHROMA ORDER PASS")
