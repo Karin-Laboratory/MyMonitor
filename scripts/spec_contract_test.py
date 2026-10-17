@@ -140,7 +140,7 @@ assert "reconcilePhysicalUsb()" in activity and "usbReconcileTask" in activity
 assert "staleCallbacksMustNotChangeNewMonitorState" in tests
 assert "spuriousDisconnectMustNotDestroyActiveCamera" in tests
 assert "nativeFailureRetriesAreBounded" in tests
-assert "versionName '0.35'" in file("app/build.gradle")
+assert "versionName '0.36'" in file("app/build.gradle")
 assert "retryDelayMs(" in policy
 assert "MyCastReceiver.exe" not in file(".github/workflows/build-apk.yml")
 print("V023 RC USB EVENT EPOCH / TIMEOUT / RELEASE CONTRACT PASS")
@@ -262,3 +262,25 @@ assert "fun offerUvcAudio(pcm: ByteArray, size: Int)" in hub
 assert "UacPcmAdapter.toStereo48k" in usb_audio
 assert (root / "app/src/test/java/com/karinlab/mymonitor/UacPcmAdapterTest.kt").exists()
 print("V035 UVC NATIVE AUDIO RACE BLOCKED / OS-ROUTED USB PCM OR VIDEO ONLY PASS")
+
+# v036 UVC recording: source NV21 orientation is the HDMI device orientation,
+# never the phone rotation. Keep v035 crash fix: Android-routed USB AudioRecord
+# feeds an optional postprocessed AAC MP4; no native UAC open/claim.
+patch=file("scripts/patch_uvc_mjpeg.py")
+mux=file("app/src/main/java/com/karinlab/mymonitor/UsbRecordingMuxer.kt")
+take=file("app/src/main/java/com/karinlab/mymonitor/UsbAudioTake.kt")
+assert "mVideoProcess = H264EncodeProcessor(previewWidth, previewHeight, isNeedGLESRender, false)" in patch
+assert 'Phone orientation must never rotate NV21 recording frames' in patch
+assert "UACAudioHandler.createHandler(" not in usb_audio
+assert ".setAudioSource(CameraRequest.AudioSource.NONE)" in fragment
+assert "recordingTake?.offer(pcm)" in usb_audio
+assert "verifiedUsbRoute = true" in usb_audio
+assert "fun beginRecording(cacheDir: File): UsbAudioTake?" in usb_audio
+assert "val take = context?.cacheDir?.let { uvcAudio?.beginRecording(it) }" in fragment
+assert "UsbRecordingMuxer.combineVideoWithPcm(result, pcm)" in fragment
+assert "File.createTempFile" in take and "ArrayBlockingQueue<ByteArray>(64)" in take
+assert "MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)" in mux
+assert "MediaExtractor()" in mux and "MediaMuxer(" in mux
+assert "hasAvTracks(merged)" in mux
+assert "result.delete()" not in fragment
+print("V036 UVC NO PHONE ROTATION / SAFE FRAME POSITION / OPTIONAL USB AAC REMUX PASS")
