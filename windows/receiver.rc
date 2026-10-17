@@ -4,8 +4,8 @@
 // Resource metadata does not replace Authenticode signing, but makes the
 // executable identifiable in Windows Explorer / security inspection.
 1 VERSIONINFO
-FILEVERSION 0,38,0,0
-PRODUCTVERSION 0,38,0,0
+FILEVERSION 0,39,0,0
+PRODUCTVERSION 0,39,0,0
 FILEFLAGSMASK 0x3fL
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
@@ -17,11 +17,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Karin Laboratory"
             VALUE "FileDescription", "MyCast Receiver - LAN screen and audio viewer"
-            VALUE "FileVersion", "0.38.0.0"
+            VALUE "FileVersion", "0.39.0.0"
             VALUE "InternalName", "MyCastReceiver"
-            VALUE "OriginalFilename", "mycastreceiver038.exe"
+            VALUE "OriginalFilename", "mycastreceiver039.exe"
             VALUE "ProductName", "MyMonitor / MyCast Receiver"
-            VALUE "ProductVersion", "0.38"
+            VALUE "ProductVersion", "0.39"
         END
     END
     BLOCK "VarFileInfo"
