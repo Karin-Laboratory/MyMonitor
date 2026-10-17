@@ -176,6 +176,16 @@ class MainActivity : AppCompatActivity() {
                 if (::monitor.isInitialized) monitor.refreshUvcAudioMonitor()
             }
         })
+        setup.addView(android.widget.CheckBox(this).apply {
+            text = "高画質録画（対応時は非圧縮YUY2を使用）"
+            setTextColor(Color.WHITE)
+            isChecked = prefs.getBoolean("hq_recording", true)
+            setOnCheckedChangeListener { _, enabled ->
+                prefs.edit().putBoolean("hq_recording", enabled).apply()
+                showStatus(if (enabled) "録画時に非圧縮YUY2を優先します。対応しない場合はMJPEGです"
+                    else "録画は従来のMJPEG入力を使用します")
+            }
+        })
         setup.addView(setupAction("⚙ Windows接続先を手動設定") { windowsSettings() })
         setupReturnButton = setupAction("← Android画面へ戻る") {
             if (StreamHub.uvcReady) {
