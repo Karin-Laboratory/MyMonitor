@@ -34,8 +34,8 @@ object UsbRecordingMuxer {
         try {
             if (!encodeAudio(pcm, audio)) return video
             mergeStreams(video, audio, merged)
-            if (!merged.isFile || merged.length() <= 4096L)
-                throw IllegalStateException("Muxer produced no usable output")
+            if (!merged.isFile || merged.length() <= 4096L || !hasAvTracks(merged))
+                throw IllegalStateException("Muxer produced no readable video+audio tracks")
             return merged
         } catch (e: Exception) {
             Log.w(TAG, "Keeping original UVC MP4; audio merge unavailable", e)
@@ -44,6 +44,20 @@ object UsbRecordingMuxer {
         } finally {
             audio.delete()
             pcm.delete()
+        }
+    }
+
+    private fun hasAvTracks(output: File): Boolean {
+        val check = MediaExtractor()
+        return try {
+            check.setDataSource(output.absolutePath)
+            val formats = (0 until check.trackCount).map {
+                check.getTrackFormat(it).getString(MediaFormat.KEY_MIME) ?: ""
+            }
+            formats.any { it.startsWith("video/") } &&
+                formats.any { it.startsWith("audio/") }
+        } finally {
+            check.release()
         }
     }
 
