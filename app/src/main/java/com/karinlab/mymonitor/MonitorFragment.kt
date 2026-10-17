@@ -413,6 +413,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     }
 
     fun refreshUvcAudioMonitor() {
+        // Keep the active USB PCM recording intact even if settings change.
+        if (recording || recordingRequested) return
         uvcAudio?.stop()
         retryHandler.postDelayed({
             if (ready && !recording && !recordingRequested && !closing) startUvcAudio()
@@ -465,6 +467,14 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     }
 
     private fun closeCamera() {
+        // A USB unplug may arrive before the native MP4 completion callback.
+        // Detach only the Android-framework PCM sink, never block camera close.
+        uvcAudio?.detachRecording()?.let { orphan ->
+            Thread({
+                orphan.finish()
+                orphan.file.delete()
+            }, "MyMonitorAbandonUsbSound").start()
+        }
         uvcAudio?.stop()
         recordingRequested = false
         if (recording && !stopping) {
@@ -561,12 +571,13 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             return
         }
         if (recordingRequested) return
+        // Safe sound is already flowing through Android AudioRecord if and
+        // only if Android has confirmed the actual USB input route. Never
+        // restart the native USB device or enable AUSBC's UAC microphone.
+        if (uvcAudio?.isRunning() != true) startUvcAudio()
         recordingRequested = true
         val output = destination("mp4")
-        status("USB映像の録画を準備しています（音声はWindowsへの転送のみ）")
-        // UVC native MP4 is video-only in this safety build. The separate
-        // Android USB audio route is stopped during video file finalization.
-        uvcAudio?.stop()
+        status("USB映像の録画を準備しています…")
         retryHandler.postDelayed({
             if (!ready || closing || camera !== c) {
                 recordingRequested = false
@@ -578,8 +589,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         recordingRequested = false
                         recording = true
                         stopping = false
+                        val take = context?.cacheDir?.let { uvcAudio?.beginRecording(it) }
                         host()?.setRecording(true)
-                        status("● USB映像を録画中（MP4は映像のみ）")
+                        status(if (take != null) "● USB映像と音声を録画中" else
+                            "● USB映像を録画中（USB音声入力が利用できません）")
                     }
                     override fun onError(error: String?) {
                         recordingRequested = false
@@ -587,6 +600,12 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         stopping = false
                         host()?.setRecording(false)
                         status("録画できませんでした: ${error ?: "詳細不明"}")
+                        uvcAudio?.detachRecording()?.let { failed ->
+                            Thread({
+                                failed.finish()
+                                failed.file.delete()
+                            }, "MyMonitorDiscardUsbSound").start()
+                        }
                         resumeUvcAudioAfterRecording()
                     }
                     override fun onComplete(path: String?) {
@@ -595,9 +614,42 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         stopping = false
                         host()?.setRecording(false)
                         val result = path?.let(::File) ?: output
-                        if (result.exists() && result.length() > 0L)
-                            host()?.saveMedia(result, "video/mp4")
-                        else status("録画ファイルが見つかりません")
+                        val usbTake = uvcAudio?.detachRecording()
+                        if (result.exists() && result.length() > 0L) {
+                            if (usbTake == null) {
+                                host()?.saveMedia(result, "video/mp4")
+                                status("USB映像を保存しました（USB音声入力なし）")
+                            } else {
+                                status("録画したUSB音声をMP4に追加しています…")
+                                Thread({
+                                    val pcm = usbTake.finish()
+                                    try {
+                                        val finalFile = UsbRecordingMuxer.combineVideoWithPcm(result, pcm)
+                                        // Never delete the original video-only MP4.
+                                        // USB audio merging is an optional overlay,
+                                        // and the original stays as a recovery copy.
+                                        host()?.saveMedia(finalFile, "video/mp4")
+                                        status(if (finalFile !== result)
+                                            "USB映像と音声の録画を保存しました"
+                                        else "映像を保存しました。USB音声の追加には失敗しました")
+                                    } catch (e: Exception) {
+                                        Log.w("MyMonitor-UVC", "USB recording remux failed", e)
+                                        host()?.saveMedia(result, "video/mp4")
+                                        status("USB音声を追加できません。映像のみ保存しました")
+                                    } finally {
+                                        usbTake.file.delete()
+                                    }
+                                }, "MyMonitorUvcAudioMux").apply { isDaemon = true; start() }
+                            }
+                        } else {
+                            usbTake?.let { dropped ->
+                                Thread({
+                                    dropped.finish()
+                                    dropped.file.delete()
+                                }, "MyMonitorDiscardUsbSound").start()
+                            }
+                            status("録画ファイルが見つかりません")
+                        }
                         resumeUvcAudioAfterRecording()
                     }
                 }, output.absolutePath)
@@ -607,6 +659,12 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 stopping = false
                 host()?.setRecording(false)
                 status("録画を開始できませんでした: ${e.message}")
+                uvcAudio?.detachRecording()?.let { aborted ->
+                    Thread({
+                        aborted.finish()
+                        aborted.file.delete()
+                    }, "MyMonitorDiscardUsbSound").start()
+                }
                 Log.e("MyMonitor-UVC", "UVC recording failed", e)
                 resumeUvcAudioAfterRecording()
             }

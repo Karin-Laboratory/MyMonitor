@@ -132,4 +132,19 @@ static jint nativeSetFrameCallback(JNIEnv *env, jobject thiz,""")
 patch(native+"serenegiant_usb_UVCCamera.cpp",
     '{ "nativeSetFrameCallback",\t\t\t"(JLcom/jiangdg/uvc/IFrameCallback;I)I", (void *) nativeSetFrameCallback },',
     '{ "nativeSetFrameCallback",\t\t\t"(JLcom/jiangdg/uvc/IFrameCallback;I)I", (void *) nativeSetFrameCallback },\n\t{ "nativeSetMjpegFrameCallback", "(JLcom/jiangdg/uvc/IFrameCallback;)I", (void *) nativeSetMjpegFrameCallback },')
-print("PASS: 11 audited anchors patched; native MJPEG callback preserves NV21 capture")
+# The upstream encoder rotates native NV21 by 90 degrees whenever the
+# *phone* is in portrait mode. HDMI/UVC orientation is determined by the
+# capture device, not the host phone. Rotating bytes without swapping the
+# encoder geometry corrupts RGB/chroma placement in local MP4s. Always encode
+# native UVC pixels in their source orientation. The preview and MJPEG tap
+# remain independent and unchanged.
+multi = "libausbc/src/main/java/com/jiangdg/ausbc/MultiCameraClient.kt"
+patch(multi, """            mContext.resources.configuration.orientation.let { orientation ->
+                orientation == Configuration.ORIENTATION_PORTRAIT
+            }.also { isPortrait ->
+                mVideoProcess = H264EncodeProcessor(previewWidth, previewHeight, isNeedGLESRender, isPortrait)
+            }""", """            // UVC/HDMI video has a fixed physical pixel orientation.
+            // Phone orientation must never rotate NV21 recording frames.
+            mVideoProcess = H264EncodeProcessor(previewWidth, previewHeight, isNeedGLESRender, false)""")
+print("PASS: 12 audited anchors patched; UVC recording preserves HDMI orientation and MJPEG tap")
+
