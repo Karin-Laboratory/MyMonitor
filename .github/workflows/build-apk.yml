@@ -198,6 +198,6 @@ jobs:
             gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.36" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
             gh release edit v0.36 --target "${GITHUB_SHA}"
           else
-            gh release create v0.36 mymonitor036.apk mycastreceiver036.exe TRANSFER.md SPEC_FIX_036.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 036 + Native Windows Receiver' --notes 'v036: protect UVC startup against v034 native USB-Audio handle races. USB audio uses OS-routed AudioRecord only when an explicit USB input route exists. Video/remote functions retained, native USB MP4 audio temporarily disabled for stability. Real UVC/UAC device validation still required.'
+            gh release create v0.36 mymonitor036.apk mycastreceiver036.exe TRANSFER.md SPEC_FIX_036.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 036 + Native Windows Receiver' --notes 'v036: fix UVC recording orientation in the pinned H264 encoder, and add optional USB sound to recorded MP4 via verified Android USB AudioRecord, offline AAC encoding and a non-destructive MediaMuxer pass. The original video-only MP4 is retained on failure or success. No native UACAudioHandler or shared libusb sound handle; physical UVC/UAC device testing remains required.'
           fi
           test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.36 --jq '.object.sha')" = "${GITHUB_SHA}"
