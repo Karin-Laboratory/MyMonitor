@@ -219,7 +219,9 @@ class MainActivity : AppCompatActivity() {
             if (StreamHub.uvcReady) monitor.takePhoto() else showStatus("スマホ画面の保存は録画を使用してください")
         }
         record = button("● 録画") {
-            if (StreamHub.uvcReady) monitor.toggleRecording()
+            // Switching from MJPEG to YUY2 temporarily closes the UVC
+            // preview, but must never start an unrelated screen recording.
+            if (StreamHub.uvcReady || monitor.isSwitchingInput()) monitor.toggleRecording()
             else startService(Intent(this, ScreenStreamService::class.java).apply {
                 action = ScreenStreamService.ACTION_RECORD
             })
