@@ -305,9 +305,10 @@ class MainActivity : AppCompatActivity() {
             else -> "USBカメラ: 未接続"
         }
         val uac = if (uvcReady) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED) "USB音声: 対応機器から自動入力"
-            else "USB音声: マイクのアクセス許可が必要"
+            if (!UsbAudioCapture.hasUsbInput(this)) "USB音声: Androidから利用できません"
+            else if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED) "USB音声: USB入力へ接続します"
+            else "USB音声: 録音のアクセス許可が必要"
         } else "USB音声: UVC接続時に利用"
         setupStatus.text = "$usb\n$uac\n$receiver\n$projection\n遠隔操作: $remote"
         setupReturnButton.text = if (uvcReady) "← UVCモニターへ戻る"
@@ -397,6 +398,12 @@ class MainActivity : AppCompatActivity() {
      */
     fun requestUvcAudioPermission() {
         if (!::monitor.isInitialized || !StreamHub.uvcReady) return
+        // No native USB audio JNI: only proceed when Android itself reports
+        // one unique, routable USB microphone. Otherwise keep UVC video live.
+        if (!UsbAudioCapture.hasUsbInput(this)) {
+            showStatus("USB映像は利用できます。AndroidにUSB音声入力は認識されていません")
+            return
+        }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED) {
             monitor.startUvcAudio()

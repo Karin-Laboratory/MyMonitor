@@ -21,7 +21,7 @@ u.PostMessageW.restype = ctypes.c_bool
 
 WM_CHAR, WM_KEYDOWN, WM_SYSKEYDOWN, WM_CLOSE = 0x0102, 0x0100, 0x0104, 0x0010
 VK_BACK = 0x08
-exe = pathlib.Path("mycastreceiver034.exe").resolve()
+exe = pathlib.Path("mycastreceiver035.exe").resolve()
 jpeg = pathlib.Path(sys.argv[1]).read_bytes()
 
 def ack(sock, payload):

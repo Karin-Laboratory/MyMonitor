@@ -1,16 +1,18 @@
-# MyMonitor / MyCast Receiver v034
+# MyMonitor / MyCast Receiver v035
 
-After GitHub Actions succeeds, download from:
-https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.34
+Stable download after GitHub Actions succeeds:
+https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.35
 
-- **mymonitor034.apk**: Android, in-place upgrade from v033 with the existing GitHub Actions signing identity.
-- **mycastreceiver034.exe**: Windows x64 native receiver (single unsigned EXE).
-- **SHA256SUMS.txt**: checksums for both binaries.
+- **mymonitor035.apk**: Android (in-place upgrade from v034 with the existing development signing key)
+- **mycastreceiver035.exe**: Windows x64 standalone unsigned receiver
+- **SHA256SUMS.txt**: both hashes for verification
 
-## v034: sound from your HDMI capture adapter
+## v035 UVC repeated-crash fix
 
-UVC video and **USB Audio Class (UAC)** sound can play on the phone and stream together to Windows over the existing 48k PCM audio TCP channel (57009). Android Settings includes a toggle for local phone-speaker monitoring; Windows playback remains enabled independently. Android RECORD_AUDIO permission is required. If the adapter offers only UVC video, picture stays available without sound. Phone-microphone fallback is **never** used.
+v034 attempted direct USB Audio Class capture on the same native USB control block already owned by the UVC video camera. The competing native lifecycles are the leading suspected cause of repeated Android app termination. v035 removes all direct native UAC calls from the app and restores the stable UVC preview/audio-source initialization from v033.
 
-Local USB MP4 files can contain the device's UAC audio. Live USB sound may pause on Windows while recording a local MP4 to avoid two simultaneous native USB audio claims; audio resumes after recording ends.
+USB capture audio is now optional and captured only through Android's **system-recognized USB audio input**, with explicit device routing checks and **no phone microphone fallback**. If Android cannot route to a USB audio input, video continues silently, with a clear status. Windows audio continues to use TCP 57009.
 
-See [SPEC_FIX_034.md](SPEC_FIX_034.md) for verification details. Android screen audio, TCP discovery, remote control, gesture queue, screen lock recovery and Windows UI from v033 remain in place. Windows EXE has no code signature; use only trusted LAN connections. A physical UAC device is required to validate sound end-to-end.
+**Important:** For safety, local UVC MP4 recording is **video-only** in v035. The MP4 USB audio feature from v034 is disabled until native stability is verified on an actual phone. Windows streaming and local audio can still work where Android exposes the adapter's USB input. See [SPEC_FIX_035.md](SPEC_FIX_035.md) for technical rationale and real-device tests.
+
+Windows screen-casting and its internal audio, remote keyboard/gesture controls and video MJPEG transport are unchanged. GitHub Actions passing does not replace verification with a physical UVC device.
