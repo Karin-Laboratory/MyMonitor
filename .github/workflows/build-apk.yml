@@ -1,7 +1,7 @@
 name: Build APK and Windows Receiver
 on:
   push:
-    branches: [main, v037-uvc-chroma-stride-fix]
+    branches: [main, v038-uvc-nv21-colors]
   workflow_dispatch:
 concurrency:
   group: mymonitor-${{ github.ref }}
@@ -16,7 +16,7 @@ jobs:
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
-      - name: Verify v037 source/lifecycle/audio/provenance contracts
+      - name: Verify v038 source/lifecycle/audio/provenance contracts
         run: python3 scripts/spec_contract_test.py
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
@@ -38,11 +38,11 @@ jobs:
           git clone --depth 1 --branch 3.6.0 https://github.com/ernestp/AndroidUSBCamera.git vendor/AndroidUSBCamera
           test "$(git -C vendor/AndroidUSBCamera rev-parse HEAD)" = "09df386a46e6aef22e4a020105246b2c9805ed05"
           python3 scripts/patch_uvc_mjpeg.py vendor/AndroidUSBCamera
-      - name: Verify UVC NV12 chroma format and codec plane padding
+      - name: Verify native-verified UVC NV21 VU chroma format and codec plane padding
         run: python3 scripts/test_uvc_chroma_layout.py
       - name: Build Android UVC/native and APK with unit tests
         run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
-      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor037.apk
+      - run: cp app/build/outputs/apk/debug/app-debug.apk mymonitor038.apk
       - name: Create original monitor icon for native Windows build
         run: |
           sudo apt-get update && sudo apt-get install -y python3-cairosvg python3-pil
@@ -50,12 +50,12 @@ jobs:
           test -s windows/monitor.ico
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor037-android-and-icon
+          name: mymonitor038-android-and-icon
           path: |
-            mymonitor037.apk
+            mymonitor038.apk
             windows/monitor.ico
             TRANSFER.md
-            SPEC_FIX_037.md
+            SPEC_FIX_038.md
 
   windows-test:
     needs: build
@@ -64,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor037-android-and-icon }
+        with: { name: mymonitor038-android-and-icon }
       - name: Compile Windows EXE natively using discovered MSVC (not MinGW)
         shell: pwsh
         run: |
@@ -82,27 +82,27 @@ jobs:
             "cd windows",
             "rc /nologo /fo receiver-res.res receiver.rc",
             "if errorlevel 1 exit /b 1",
-            "cl /nologo /std:c++17 /utf-8 /O2 /EHsc /MT /Fe:..\mycastreceiver037.exe receiver.cpp receiver-res.res ws2_32.lib user32.lib gdi32.lib gdiplus.lib shlwapi.lib ole32.lib winmm.lib /link /SUBSYSTEM:WINDOWS /MACHINE:X64",
+            "cl /nologo /std:c++17 /utf-8 /O2 /EHsc /MT /Fe:..\mycastreceiver038.exe receiver.cpp receiver-res.res ws2_32.lib user32.lib gdi32.lib gdiplus.lib shlwapi.lib ole32.lib winmm.lib /link /SUBSYSTEM:WINDOWS /MACHINE:X64",
             "if errorlevel 1 exit /b 1",
             "cd .."
           )
-          Set-Content -Path build-msvc-037.cmd -Value $script -Encoding ascii
-          & cmd.exe /d /c build-msvc-037.cmd
+          Set-Content -Path build-msvc-038.cmd -Value $script -Encoding ascii
+          & cmd.exe /d /c build-msvc-038.cmd
           if ($LASTEXITCODE -ne 0) { throw "MSVC compilation or resource linking failed ($LASTEXITCODE)" }
-          if (-not (Test-Path mycastreceiver037.exe)) { throw "Missing MSVC output executable" }
+          if (-not (Test-Path mycastreceiver038.exe)) { throw "Missing MSVC output executable" }
       - name: Check Windows EXE metadata and Defender if available
         shell: pwsh
         run: |
-          $exe = (Resolve-Path ".\mycastreceiver037.exe").Path
+          $exe = (Resolve-Path ".\mycastreceiver038.exe").Path
           $info = (Get-Item $exe).VersionInfo
-          if ($info.FileVersion -ne "0.37.0.0") { throw "PE version metadata missing: $($info.FileVersion)" }
+          if ($info.FileVersion -ne "0.38.0.0") { throw "PE version metadata missing: $($info.FileVersion)" }
           $sig = Get-AuthenticodeSignature $exe
           Write-Host "Authenticode status: $($sig.Status). Signing requires a trusted certificate not available in CI."
           $defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
           if ($defender -and $defender.AMServiceEnabled -and $defender.AntivirusEnabled) {
             Start-MpScan -ScanType CustomScan -ScanPath $exe -ErrorAction Stop
             $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
-              @($_.Resources) -match [regex]::Escape("mycastreceiver037.exe")
+              @($_.Resources) -match [regex]::Escape("mycastreceiver038.exe")
             })
             if ($hits.Count -gt 0) { throw "Microsoft Defender detected the built executable: $($hits | Out-String)" }
             Write-Host "Defender scan of hosted CI executable completed with no reported detection."
@@ -151,7 +151,7 @@ jobs:
         run: |
           python windows/wheel_test.py test.jpg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: v037 remote keyboard UTF-8 and safe-off regression on native EXE
+      - name: v038 remote keyboard UTF-8 and safe-off regression on native EXE
         shell: pwsh
         run: |
           python windows/keyboard_test.py test.jpg
@@ -164,7 +164,7 @@ jobs:
       - name: Verify published APK and MSVC EXE checksums
         shell: pwsh
         run: |
-          $files = @('mymonitor037.apk', 'mycastreceiver037.exe')
+          $files = @('mymonitor038.apk', 'mycastreceiver038.exe')
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $file"
@@ -173,12 +173,12 @@ jobs:
           foreach ($file in $files) { if (-not (Test-Path $file)) { throw "Missing $file" } }
       - uses: actions/upload-artifact@v4
         with:
-          name: mymonitor037-verified
+          name: mymonitor038-verified
           path: |
-            mymonitor037.apk
-            mycastreceiver037.exe
+            mymonitor038.apk
+            mycastreceiver038.exe
             TRANSFER.md
-            SPEC_FIX_037.md
+            SPEC_FIX_038.md
             SHA256SUMS.txt
 
   publish:
@@ -188,18 +188,18 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: mymonitor037-verified }
+        with: { name: mymonitor038-verified }
       - name: Publish only fully tested APK and MSVC EXE
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           sha256sum -c SHA256SUMS.txt
-          if gh release view v0.37 >/dev/null 2>&1; then
-            gh release upload v0.37 mymonitor037.apk mycastreceiver037.exe TRANSFER.md SPEC_FIX_037.md SHA256SUMS.txt --clobber
-            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.37" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
-            gh release edit v0.37 --target "${GITHUB_SHA}"
+          if gh release view v0.38 >/dev/null 2>&1; then
+            gh release upload v0.38 mymonitor038.apk mycastreceiver038.exe TRANSFER.md SPEC_FIX_038.md SHA256SUMS.txt --clobber
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/v0.38" -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+            gh release edit v0.38 --target "${GITHUB_SHA}"
           else
-            gh release create v0.37 mymonitor037.apk mycastreceiver037.exe TRANSFER.md SPEC_FIX_037.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 037 + Native Windows Receiver' --notes 'v037: correct UVC recording colors and red/blue frame displacement by honoring Android MediaCodec YUV_420_888 Image.Plane rowStride and pixelStride while preserving native NV12 U/V order. Keep v036 crash-safe Android USB audio MP4 remux and low latency Windows video. Verify with a real UVC source.'
+            gh release create v0.38 mymonitor038.apk mycastreceiver038.exe TRANSFER.md SPEC_FIX_038.md SHA256SUMS.txt --target "${GITHUB_SHA}" --title 'MyMonitor 038 + Native Windows Receiver' --notes 'v038: fix cyan/blue skin tones and missing green in UVC MP4. Pinned native UVC callback actually outputs NV21 (V,U) despite Java enum NV12 comment. Correct Image.Plane U/V assignment while retaining v037 codec stride alignment, safe USB sound remux and v035 connection stability. Physical UVC color test required.'
           fi
-          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.37 --jq '.object.sha')" = "${GITHUB_SHA}"
+          test "$(gh api repos/${GH_REPO}/git/ref/tags/v0.38 --jq '.object.sha')" = "${GITHUB_SHA}"
