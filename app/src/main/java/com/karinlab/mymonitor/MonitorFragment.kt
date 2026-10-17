@@ -589,7 +589,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         recordingRequested = false
                         recording = true
                         stopping = false
-                        val take = uvcAudio?.beginRecording(requireContext().cacheDir)
+                        val take = context?.cacheDir?.let { uvcAudio?.beginRecording(it) }
                         host()?.setRecording(true)
                         status(if (take != null) "● USB映像と音声を録画中" else
                             "● USB映像を録画中（USB音声入力が利用できません）")
@@ -625,10 +625,9 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                                     val pcm = usbTake.finish()
                                     try {
                                         val finalFile = UsbRecordingMuxer.combineVideoWithPcm(result, pcm)
-                                        if (finalFile !== result && finalFile.exists()) {
-                                            // Preserve the original until remux succeeds.
-                                            result.delete()
-                                        }
+                                        // Never delete the original video-only MP4.
+                                        // USB audio merging is an optional overlay,
+                                        // and the original stays as a recovery copy.
                                         host()?.saveMedia(finalFile, "video/mp4")
                                         status(if (finalFile !== result)
                                             "USB映像と音声の録画を保存しました"
