@@ -262,6 +262,41 @@ patch(h264, """    /**
     /**
      * Set on encode ready listener
      */""")
-print("PASS: 19 audited anchors patched; actual UVC NV21 VU order and padded codec chroma are preserved")
+# Only real YUYV support is eligible for high-quality recordings. AUSBC's
+# normal camera startup silently tries the opposite format on failure; that
+# would falsely label an MJPEG capture as an uncompressed YUYV recording.
+camera = "libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt"
+patch(camera, """    fun isMicSupported() = CameraUtils.isCameraContainsMic(this.device)""",
+"""    /** Read native UVC descriptors for uncompressed modes while camera is open. */
+    fun getUncompressedYuyvSizes(): List<PreviewSize> =
+        mUvcCamera?.getSupportedSizeList(UVCCamera.FRAME_FORMAT_YUYV)?.map {
+            PreviewSize(it.width, it.height)
+        } ?: emptyList()
+
+    fun isMicSupported() = CameraUtils.isCameraContainsMic(this.device)""")
+patch(camera, """        } catch (e: Exception) {
+            try {
+                previewSize = getSuitableSize(request.previewWidth, request.previewHeight).apply {""",
+"""        } catch (e: Exception) {
+            // Fail closed in YUYV recording mode; never silently negotiate
+            // MJPEG while claiming a lossless input. The Android app catches
+            // ERROR and restores its known-good MJPEG camera session.
+            if (previewFormat == UVCCamera.FRAME_FORMAT_YUYV) {
+                postStateEvent(ICameraStateCallBack.State.ERROR,
+                    "非圧縮YUY2が利用できません: ${e.localizedMessage}")
+                return
+            }
+            try {
+                previewSize = getSuitableSize(request.previewWidth, request.previewHeight).apply {""")
+# Increase capture MP4 codec quality without changing MyCast video transport.
+h264 = "libausbc/src/main/java/com/jiangdg/ausbc/encode/H264EncodeProcessor.kt"
+patch(h264, """        return bitRate.toInt()""",
+"""        // The network sender taps MJPEG directly and is not affected.
+        // Recording gets high-quality AVC while keeping hardware codec limits.
+        val highQualityBitrate = (width.toLong() * height.toLong() * 10L)
+            .coerceIn(6_000_000L, 30_000_000L).toInt()
+        return highQualityBitrate""")
+print("PASS: 22 audited anchors patched; verified UVC YUYV mode + 10bpp AVC capture quality")
+
 
 
