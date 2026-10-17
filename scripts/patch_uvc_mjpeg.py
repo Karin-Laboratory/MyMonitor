@@ -146,13 +146,16 @@ patch(multi, """            mContext.resources.configuration.orientation.let { o
             }""", """            // UVC/HDMI video has a fixed physical pixel orientation.
             // Phone orientation must never rotate NV21 recording frames.
             mVideoProcess = H264EncodeProcessor(previewWidth, previewHeight, isNeedGLESRender, false)""")
-# Upstream CameraUVC registers UVCCamera.PIXEL_FORMAT_YUV420SP = 4 (NV12,
-# interleaved UV), but H264EncodeProcessor treats it as NV21 (VU), swaps the
-# chroma bytes, and blindly pastes the tight result into MediaCodec's opaque
-# input buffer. Hardware encoders may have a padded Y sliceHeight (e.g. 1088
+# Upstream CameraUVC registers PIXEL_FORMAT_YUV420SP = 4, documented as NV12,
+# BUT UVCPreview.cpp actually selects uvc_yuyv2iyuv420SP for format 4.
+# libuvc/frame.c proves that function emits V,U (NV21), not U,V. v037 kept
+# the YUV plane stride fix, but mistakenly interpreted the source as NV12,
+# turning faces blue/cyan and removing normal warm/green color reproduction.
+# The source MUST be decoded as V,U, then written to MediaCodec planes U,V.
+# Hardware encoders may have a padded Y sliceHeight (e.g. 1088
 # for visible 1080), causing chroma content to begin several lines too early.
 # Use COLOR_FormatYUV420Flexible + each Image.Plane's actual row/pixel strides
-# and preserve the native camera's NV12 U,V order.
+# and preserve the native callback's actual NV21 V,U order.
 abstract = "libausbc/src/main/java/com/jiangdg/ausbc/encode/AbstractProcessor.kt"
 patch(abstract, """            val inputBuffer = if (isLowerLollipop()) {
                 codec.inputBuffers[inputIndex]
@@ -188,11 +191,10 @@ patch(h264, """                if (isPortrait) {
                     YUVUtils.nativeRotateNV21(data,width, height, 90)
                 }
                 YUVUtils.nv21ToYuv420sp(data, width, height)""",
-"""                // CameraUVC registers PIXEL_FORMAT_YUV420SP (NV12).
-                // The upstream NV21 conversion swapped correct native UV
-                // bytes into VU, causing visibly incorrect RGB chroma.
-                // HDMI orientation is fixed separately by MultiCameraClient.
-                // No mutation here: write NV12 to negotiated Image planes.""")
+"""                // The native callback is NV21 V,U even though the Java enum
+                // PIXEL_FORMAT_YUV420SP is incorrectly documented as NV12.
+                // Do not mutate source; write into the codec's U and V planes
+                // using the actual YUV_420_888 rowStride/pixelStride.""")
 patch(h264, """        return MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar""",
 """        return MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible""")
 patch(h264, """    /**
@@ -201,7 +203,7 @@ patch(h264, """    /**
      * @param listener input surface ready listener
      */""",
 """    /**
-     * Correctly pack UVC native NV12 into MediaCodec's YUV_420_888 input.
+     * Correctly pack UVC native NV21 into MediaCodec's YUV_420_888 input.
      * At 1920x1080 a device may align the Y slice to 1088; raw ByteBuffer
      * packing causes UV to start 8 rows early, visually displacing red/blue
      * relative to luma. Image.Plane metadata is authoritative.
@@ -246,8 +248,9 @@ patch(h264, """    /**
                 val dstV = row * v.rowStride
                 for (col in 0 until width / 2) {
                     val src = inputRow + 2 * col
-                    u.buffer.put(dstU + col * u.pixelStride, data[src])
-                    v.buffer.put(dstV + col * v.pixelStride, data[src + 1])
+                    // Native libuvc 'iyuv420SP' writes VU (NV21), not UV.
+                    v.buffer.put(dstV + col * v.pixelStride, data[src])
+                    u.buffer.put(dstU + col * u.pixelStride, data[src + 1])
                 }
             }
         } finally {
@@ -259,6 +262,6 @@ patch(h264, """    /**
     /**
      * Set on encode ready listener
      */""")
-print("PASS: 19 audited anchors patched; NV12 color order and padded codec chroma are preserved")
+print("PASS: 19 audited anchors patched; actual UVC NV21 VU order and padded codec chroma are preserved")
 
 
