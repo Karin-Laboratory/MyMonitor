@@ -1,7 +1,7 @@
 """v025 reverse control on existing JPEG/ACK connection. No real touch injection."""
 import socket, subprocess, time, pathlib, sys
-exe=pathlib.Path(__file__).with_name("mycastreceiver034.exe")
-if not exe.exists(): exe=pathlib.Path("mycastreceiver034.exe")
+exe=pathlib.Path(__file__).with_name("mycastreceiver035.exe")
+if not exe.exists(): exe=pathlib.Path("mycastreceiver035.exe")
 assert exe.exists(), exe
 proc=subprocess.Popen([str(exe.resolve())],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 try:
