@@ -1,18 +1,17 @@
-# MyMonitor / MyCast Receiver v035
+# MyMonitor v036 | UVC録画の位置ずれ・USB音声付きMP4
 
-Stable download after GitHub Actions succeeds:
-https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.35
+Download after CI passes: https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.36
 
-- **mymonitor035.apk**: Android (in-place upgrade from v034 with the existing development signing key)
-- **mycastreceiver035.exe**: Windows x64 standalone unsigned receiver
-- **SHA256SUMS.txt**: both hashes for verification
+- `mymonitor036.apk`: Android application, update from v035
+- `mycastreceiver036.exe`: Windows x64 receiver, existing MyCast network protocol
+- `SHA256SUMS.txt`: verified build checksums
 
-## v035 UVC repeated-crash fix
+## v036
 
-v034 attempted direct USB Audio Class capture on the same native USB control block already owned by the UVC video camera. The competing native lifecycles are the leading suspected cause of repeated Android app termination. v035 removes all direct native UAC calls from the app and restores the stable UVC preview/audio-source initialization from v033.
+USB-HDMIの録画は、スマホ本体の縦横に連動してUVCフレームを90度回転させていた上流AUSBC側の処理を修正。プレビューと同じHDMIの画素方向でMP4を保存します。
 
-USB capture audio is now optional and captured only through Android's **system-recognized USB audio input**, with explicit device routing checks and **no phone microphone fallback**. If Android cannot route to a USB audio input, video continues silently, with a clear status. Windows audio continues to use TCP 57009.
+USB音声はv035からの安全なAndroidシステムの`AudioRecord`を引き続き使用し、USB入力の実ルートが確認できたときだけ記録します。録画終了後に別スレッドでAACにエンコードして、UVCの映像専用MP4と合成します。v034でクラッシュ原因候補だった`UACAudioHandler`によるネイティブUSB二重アクセスは使いません。
 
-**Important:** For safety, local UVC MP4 recording is **video-only** in v035. The MP4 USB audio feature from v034 is disabled until native stability is verified on an actual phone. Windows streaming and local audio can still work where Android exposes the adapter's USB input. See [SPEC_FIX_035.md](SPEC_FIX_035.md) for technical rationale and real-device tests.
+**注意:** 録画停止後のMP4音声追加には処理時間がかかります。音声が使えない場合は映像のみ保存。合成後も元の映像専用ファイルをバックアップとして残します。実機UVC/UACの動作確認は未実施です。
 
-Windows screen-casting and its internal audio, remote keyboard/gesture controls and video MJPEG transport are unchanged. GitHub Actions passing does not replace verification with a physical UVC device.
+Technical notes: [SPEC_FIX_036.md](SPEC_FIX_036.md)
