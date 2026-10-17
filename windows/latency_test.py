@@ -29,7 +29,7 @@ def title(hwnd):
     user32.GetWindowTextW(hwnd, buf, len(buf))
     return buf.value
 
-proc = subprocess.Popen([str(Path("mycastreceiver034.exe").resolve())])
+proc = subprocess.Popen([str(Path("mycastreceiver035.exe").resolve())])
 hwnd = None
 try:
     for _ in range(150):
