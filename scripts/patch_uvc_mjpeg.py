@@ -197,6 +197,8 @@ patch(h264, """        return MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV42
 """        return MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible""")
 patch(h264, """    /**
      * Set on encode ready listener
+     *
+     * @param listener input surface ready listener
      */""",
 """    /**
      * Correctly pack UVC native NV12 into MediaCodec's YUV_420_888 input.
