@@ -119,7 +119,7 @@ class UsbAudioCapture(private val context: Context,
                 // Do NOT read, play or transmit any samples until an actual USB
                 // route is confirmed. A missing route means video-only.
                 val routed = record.routedDevice
-                if (routed?.id != device.id || !routed.isSource) {
+                if (routed == null || routed.id != device.id || !routed.isSource) {
                     onState("USB音声への接続を確認できません。映像のみ利用できます")
                     return@Thread
                 }
