@@ -286,7 +286,7 @@ assert "result.delete()" not in fragment
 print("V036 UVC NO PHONE ROTATION / SAFE FRAME POSITION / OPTIONAL USB AAC REMUX PASS")
 
 # v037: UVC recorded red/chroma frame misalignment.
-# Native UVC callback is NV12 and the H.264 input Image planes must use
+# Native UVC callback is NV21 (VU) and the H.264 input Image planes must use
 # MediaCodec's exact row/pixel strides, NOT raw tight-buffer layout.
 uvc_patch=file("scripts/patch_uvc_mjpeg.py")
 assert "COLOR_FormatYUV420Flexible" in uvc_patch
@@ -298,4 +298,7 @@ assert "v.buffer.put(dstV + col * v.pixelStride, data[src])" in uvc_patch
 assert "mVideoProcess = H264EncodeProcessor(previewWidth, previewHeight, isNeedGLESRender, false)" in uvc_patch
 assert "The native callback is NV21 V,U" in uvc_patch
 assert (root / "scripts/test_uvc_chroma_layout.py").exists()
+assert "uvc_yuyv2iyuv420SP" in uvc_patch
+assert "v.buffer.put(dstV + col * v.pixelStride, data[src])" in uvc_patch
+assert "u.buffer.put(dstU + col * u.pixelStride, data[src + 1])" in uvc_patch
 print("V038 STRIDE-CORRECT YUV_420_888 AND VERIFIED NV21 VU ORDER PASS")
