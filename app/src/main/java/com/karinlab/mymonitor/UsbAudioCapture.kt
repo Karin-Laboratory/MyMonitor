@@ -11,6 +11,7 @@ import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.util.Log
+import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -33,6 +34,22 @@ class UsbAudioCapture(private val context: Context,
     @Volatile private var recorder: AudioRecord? = null
     @Volatile private var worker: Thread? = null
     @Volatile private var speakerWorker: Thread? = null
+    @Volatile private var verifiedUsbRoute = false
+    @Volatile private var recordingTake: UsbAudioTake? = null
+
+    /** One OS-routed producer feeds Windows, local speakers and the MP4 take. */
+    @Synchronized fun beginRecording(cacheDir: File): UsbAudioTake? {
+        if (!running.get() || !verifiedUsbRoute || recordingTake != null) return null
+        return try {
+            UsbAudioTake(cacheDir).also { recordingTake = it }
+        } catch (e: Exception) {
+            Log.w("MyMonitor-USB-Audio", "USB sound recording unavailable", e)
+            null
+        }
+    }
+
+    @Synchronized fun detachRecording(): UsbAudioTake? =
+        recordingTake.also { recordingTake = null }
 
     fun isRunning() = running.get()
 
@@ -123,6 +140,7 @@ class UsbAudioCapture(private val context: Context,
                     onState("USB音声への接続を確認できません。映像のみ利用できます")
                     return@Thread
                 }
+                verifiedUsbRoute = true
                 if (localMonitor) startSpeaker(epoch)
                 onState("USBキャプチャの音声入力を開始しました")
                 val data = ByteArray(4096 * channels * 2)
@@ -139,6 +157,7 @@ class UsbAudioCapture(private val context: Context,
                         record.routedDevice?.id != device.id) break
                     val pcm = UacPcmAdapter.toStereo48k(data.copyOf(n), rate, channels, 16)
                         ?: continue
+                    recordingTake?.offer(pcm)
                     for (offset in pcm.indices step 19200) {
                         val chunk = pcm.copyOfRange(offset, minOf(offset + 19200, pcm.size))
                         StreamHub.offerUvcAudio(chunk, chunk.size)
@@ -154,6 +173,7 @@ class UsbAudioCapture(private val context: Context,
                     onState("USB音声を取得できません。映像は継続します")
                 }
             } finally {
+                verifiedUsbRoute = false
                 try { capture?.stop() } catch (_: Exception) {}
                 try { capture?.release() } catch (_: Exception) {}
                 if (recorder === capture) recorder = null
@@ -198,6 +218,7 @@ class UsbAudioCapture(private val context: Context,
     }
 
     @Synchronized fun stop() {
+        verifiedUsbRoute = false
         running.set(false)
         ++generation
         speakerQueue.clear()
