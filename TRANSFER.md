@@ -1,19 +1,15 @@
-# MyMonitor v038 | UVC録画で緑が消えて顔が青く見える問題
+# MyMonitor v039 | 録画だけ非圧縮YUY2＋高画質H.264
 
-GitHub Release: https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.38
+正式配布: https://github.com/Karin-Laboratory/MyMonitor/releases/tag/v0.39
 
-- `mymonitor038.apk`: Android版
-- `mycastreceiver038.exe`: Windows x64版
-- `SHA256SUMS.txt`: ビルド成果物のチェックサム
+- `mymonitor039.apk`: Android APK
+- `mycastreceiver039.exe`: Windows x64受信EXE（従来MJPEG低遅延維持）
+- `SHA256SUMS.txt`: ファイル検証用チェックサム
 
-## v038 変更点
+設定「高画質録画（対応時は非圧縮YUY2を使用）」はデフォルトON。
 
-v037で赤色輪郭の上下ずれを直したところ、録画映像の肌色が青くなり、緑色の再現が崩れた症状を修正します。原因は**実際のUVCネイティブ映像がNV21（V→U）なのに、Java側の誤ったコメントを信用してNV12（U→V）として扱っていたこと**。上流のC++変換コードを追跡して確認しました。
+録画時だけ、現在の解像度で機器が非圧縮YUY2に対応しているか判定し、対応時はUVCを再オープンして高ビットレートH.264でMP4保存。終了後はMJPEGに自動復帰。YUY2の帯域不足や接続失敗時はMJPEG録画にフォールバックします。録画中のWindowsへのMJPEG直接転送は一時停止します。**録画の高画質化を優先した機能で、Windows転送は低遅延を維持します。**
 
-v038では、**v037の色成分の行間隔（stride）修正はそのまま**に、UとVの正しい割り当てだけを直します。USB接続、音声録画・AAC合成、Windows向け低遅延映像転送、遠隔操作は変更しません。
+実機のfpsや画質改善にはUSB 3.x接続等の影響があります。UVC/USB音声を二重に開かない構成、音声付きMP4合成、色成分の修正はv038を維持。実機テスト前に成功を断言しないでください。
 
-GitHub Actionsでは実際の上流C++コードに対する色順の照合と、赤色・strideの合成テストを追加しました。
-
-注意：実機の色と音声の最終動作は自動テストでは検証できません。v038でテレビ映像を約10秒録画し、赤い字幕が正しい位置にあること、肌色・緑が戻っていること、音声が出ることを確認してください。
-
-詳細: [SPEC_FIX_038.md](SPEC_FIX_038.md)
+詳細 [SPEC_FIX_039.md](SPEC_FIX_039.md)
