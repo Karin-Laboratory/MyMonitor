@@ -146,5 +146,119 @@ patch(multi, """            mContext.resources.configuration.orientation.let { o
             }""", """            // UVC/HDMI video has a fixed physical pixel orientation.
             // Phone orientation must never rotate NV21 recording frames.
             mVideoProcess = H264EncodeProcessor(previewWidth, previewHeight, isNeedGLESRender, false)""")
-print("PASS: 12 audited anchors patched; UVC recording preserves HDMI orientation and MJPEG tap")
+# Upstream CameraUVC registers UVCCamera.PIXEL_FORMAT_YUV420SP = 4 (NV12,
+# interleaved UV), but H264EncodeProcessor treats it as NV21 (VU), swaps the
+# chroma bytes, and blindly pastes the tight result into MediaCodec's opaque
+# input buffer. Hardware encoders may have a padded Y sliceHeight (e.g. 1088
+# for visible 1080), causing chroma content to begin several lines too early.
+# Use COLOR_FormatYUV420Flexible + each Image.Plane's actual row/pixel strides
+# and preserve the native camera's NV12 U,V order.
+abstract = "libausbc/src/main/java/com/jiangdg/ausbc/encode/AbstractProcessor.kt"
+patch(abstract, """            val inputBuffer = if (isLowerLollipop()) {
+                codec.inputBuffers[inputIndex]
+            } else {
+                codec.getInputBuffer(inputIndex)
+            }
+            inputBuffer?.clear()
+            inputBuffer?.put(data)
+            codec.queueInputBuffer(inputIndex, 0, data.size, getPTSUs(data.size), 0)""",
+"""            // USB recording uses MediaCodec's negotiated Image planes so that
+            // Y and chroma honor padded stride/slice-height on the device.
+            // Audio and other processors retain the original byte-buffer path.
+            if (!writeInputFrame(codec, inputIndex, data)) {
+                val inputBuffer = if (isLowerLollipop()) {
+                    codec.inputBuffers[inputIndex]
+                } else {
+                    codec.getInputBuffer(inputIndex)
+                }
+                inputBuffer?.clear()
+                inputBuffer?.put(data)
+            }
+            codec.queueInputBuffer(inputIndex, 0, data.size, getPTSUs(data.size), 0)""")
+patch(abstract, """    protected abstract fun processInputData(data: ByteArray): ByteArray?""",
+"""    /** Override only for flexible-format video; false keeps legacy audio. */
+    protected open fun writeInputFrame(codec: MediaCodec, inputIndex: Int,
+                                       data: ByteArray): Boolean = false
+
+    protected abstract fun processInputData(data: ByteArray): ByteArray?""")
+h264 = "libausbc/src/main/java/com/jiangdg/ausbc/encode/H264EncodeProcessor.kt"
+patch(h264, """import android.media.MediaCodecInfo""", """import android.media.MediaCodecInfo
+import android.media.Image""")
+patch(h264, """                if (isPortrait) {
+                    YUVUtils.nativeRotateNV21(data,width, height, 90)
+                }
+                YUVUtils.nv21ToYuv420sp(data, width, height)""",
+"""                // CameraUVC registers PIXEL_FORMAT_YUV420SP (NV12).
+                // The upstream NV21 conversion swapped correct native UV
+                // bytes into VU, causing visibly incorrect RGB chroma.
+                // HDMI orientation is fixed separately by MultiCameraClient.
+                // No mutation here: write NV12 to negotiated Image planes.""")
+patch(h264, """        return MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar""",
+"""        return MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible""")
+patch(h264, """    /**
+     * Set on encode ready listener
+     *
+     * @param listener input surface ready listener
+     */""",
+"""    /**
+     * Correctly pack UVC native NV12 into MediaCodec's YUV_420_888 input.
+     * At 1920x1080 a device may align the Y slice to 1088; raw ByteBuffer
+     * packing causes UV to start 8 rows early, visually displacing red/blue
+     * relative to luma. Image.Plane metadata is authoritative.
+     */
+    override fun writeInputFrame(codec: MediaCodec, inputIndex: Int,
+                                 data: ByteArray): Boolean {
+        if (gLESRender) return false
+        val image = codec.getInputImage(inputIndex)
+            ?: throw IllegalStateException("YUV420Flexible input planes unavailable")
+        try {
+            require(data.size == width * height * 3 / 2)
+            require(width % 2 == 0 && height % 2 == 0)
+            require(image.planes.size == 3)
+            val crop = image.cropRect
+            require(crop.width() == width && crop.height() == height) {
+                "Codec input crop differs from UVC frame: \${crop.width()}x\${crop.height()}"
+            }
+            val y = image.planes[0]
+            val u = image.planes[1]
+            val v = image.planes[2]
+            // Luma normally has pixelStride=1. Use bulk row writes for
+            // Full HD (3 million bytes/frame) to avoid per-pixel JNI work.
+            if (y.pixelStride == 1) {
+                val output = y.buffer.duplicate()
+                for (row in 0 until height) {
+                    output.position(row * y.rowStride)
+                    output.put(data, row * width, width)
+                }
+            } else {
+                for (row in 0 until height) {
+                    val inputRow = row * width
+                    val dstRow = row * y.rowStride
+                    for (col in 0 until width) {
+                        y.buffer.put(dstRow + col * y.pixelStride, data[inputRow + col])
+                    }
+                }
+            }
+            val offset = width * height
+            for (row in 0 until height / 2) {
+                val inputRow = offset + row * width
+                val dstU = row * u.rowStride
+                val dstV = row * v.rowStride
+                for (col in 0 until width / 2) {
+                    val src = inputRow + 2 * col
+                    u.buffer.put(dstU + col * u.pixelStride, data[src])
+                    v.buffer.put(dstV + col * v.pixelStride, data[src + 1])
+                }
+            }
+        } finally {
+            image.close()
+        }
+        return true
+    }
+
+    /**
+     * Set on encode ready listener
+     */""")
+print("PASS: 19 audited anchors patched; NV12 color order and padded codec chroma are preserved")
+
 

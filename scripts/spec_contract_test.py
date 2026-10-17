@@ -74,7 +74,7 @@ assert "PowerManager.PARTIAL_WAKE_LOCK" in service
 assert "refreshPowerLock()" in service
 assert "onTaskRemoved(" in service
 assert "onTrimMemory(" in service
-assert 'versionCode 36' in file("app/build.gradle")
+assert 'versionCode 37' in file("app/build.gradle")
 print("V017 POWER/LIFECYCLE CONTRACTS RETAINED (v018 preview supersedes ratio check)")
 
 # v018: the UVC image-size decision belongs to the parent viewport exactly once.
@@ -88,7 +88,7 @@ assert "camera?.setRenderSize(" not in fragment
 assert "PreviewGeometry.centered(" in fragment
 assert "fun centered(" in preview_geometry
 assert "screenshotLandscapeViewportShouldFillHeightAndCenter" in file("app/src/test/java/com/karinlab/mymonitor/PreviewGeometryTest.kt")
-assert "versionCode 36" in file("app/build.gradle")
+assert "versionCode 37" in file("app/build.gradle")
 print("V018 UVC PREVIEW CONTRACT PASS: native direct SurfaceTexture, single fit-center authority")
 
 # v019 audio lifecycle and Windows binary provenance.
@@ -106,7 +106,7 @@ assert 'playbackAudioAllowed' in hub
 assert "waveOutReset(device)" in file("windows/audio_receiver.h")
 assert "VERSIONINFO" in file("windows/receiver.rc")
 assert "msvc" in file(".github/workflows/build-apk.yml").lower()
-assert 'versionCode 36' in file("app/build.gradle")
+assert 'versionCode 37' in file("app/build.gradle")
 print("V019 LOCK/UNLOCK AUDIO + MSVC CONTRACT PASS")
 assert "private var opening = false" in fragment
 assert "if (opening || closing || camera != null || !physicalPresent(device)) return" in fragment
@@ -140,7 +140,7 @@ assert "reconcilePhysicalUsb()" in activity and "usbReconcileTask" in activity
 assert "staleCallbacksMustNotChangeNewMonitorState" in tests
 assert "spuriousDisconnectMustNotDestroyActiveCamera" in tests
 assert "nativeFailureRetriesAreBounded" in tests
-assert "versionName '0.36'" in file("app/build.gradle")
+assert "versionName '0.37'" in file("app/build.gradle")
 assert "retryDelayMs(" in policy
 assert "MyCastReceiver.exe" not in file(".github/workflows/build-apk.yml")
 print("V023 RC USB EVENT EPOCH / TIMEOUT / RELEASE CONTRACT PASS")
@@ -284,3 +284,18 @@ assert "MediaExtractor()" in mux and "MediaMuxer(" in mux
 assert "hasAvTracks(merged)" in mux
 assert "result.delete()" not in fragment
 print("V036 UVC NO PHONE ROTATION / SAFE FRAME POSITION / OPTIONAL USB AAC REMUX PASS")
+
+# v037: UVC recorded red/chroma frame misalignment.
+# Native UVC callback is NV12 and the H.264 input Image planes must use
+# MediaCodec's exact row/pixel strides, NOT raw tight-buffer layout.
+uvc_patch=file("scripts/patch_uvc_mjpeg.py")
+assert "COLOR_FormatYUV420Flexible" in uvc_patch
+assert "codec.getInputImage(inputIndex)" in uvc_patch
+assert "output.position(row * y.rowStride)" in uvc_patch
+assert "output.put(data, row * width, width)" in uvc_patch
+assert "u.buffer.put(dstU + col * u.pixelStride, data[src])" in uvc_patch
+assert "v.buffer.put(dstV + col * v.pixelStride, data[src + 1])" in uvc_patch
+assert "mVideoProcess = H264EncodeProcessor(previewWidth, previewHeight, isNeedGLESRender, false)" in uvc_patch
+assert "No mutation here: write NV12 to negotiated Image planes" in uvc_patch
+assert (root / "scripts/test_uvc_chroma_layout.py").exists()
+print("V037 STRIDE-CORRECT YUV_420_888 AND NV12 CHROMA ORDER PASS")
