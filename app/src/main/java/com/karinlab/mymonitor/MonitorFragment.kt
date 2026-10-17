@@ -42,7 +42,6 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private val windowsSender get() = StreamHub.sender
     private var usbMonitor: USBMonitor? = null
     private var camera: CameraUVC? = null
-    private var uvcBlock: USBMonitor.UsbControlBlock? = null
     private var uvcAudio: UsbAudioCapture? = null
     private var recordingRequested = false
     private var currentDeviceId: Int? = null
@@ -294,7 +293,6 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         if (opening || closing || camera != null || !physicalPresent(device)) return
         opening = true
         currentDeviceId = device.deviceId
-        uvcBlock = control
         status("USB許可取得、UVCオープン中")
         try {
             val newCamera = CameraUVC(requireContext(), device)
@@ -318,7 +316,10 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 // Independent MJPEG passthrough and MP4/NV21 capture are kept.
                 .setRenderMode(CameraRequest.RenderMode.NORMAL)
                 .setAspectRatioShow(false)
-                .setAudioSource(CameraRequest.AudioSource.SOURCE_DEV_MIC)
+                // v035: native AUSBC USB-Audio opens the same libusb
+                // control block on parallel worker threads; keep the stable
+                // v033 video-only native camera initialization.
+                .setAudioSource(CameraRequest.AudioSource.NONE)
                 .create()
             newCamera.openCamera(preview, request)
         } catch (e: Exception) {
@@ -339,9 +340,14 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     ready = true
                     StreamHub.setUvcReady(true)
                     host()?.onUvcReady()
-                    if ((self as? CameraUVC)?.isMicSupported() == true)
-                        host()?.requestUvcAudioPermission()
-                    else status("このUSBキャプチャ機器は映像のみ対応しています")
+                    if ((self as? CameraUVC)?.isMicSupported() == true) {
+                        // Allow the UVC camera to settle before Android opens
+                        // a separate *framework-managed* USB audio endpoint.
+                        retryHandler.postDelayed({
+                            if (ready && !closing && camera === self)
+                                host()?.requestUvcAudioPermission()
+                        }, 1200L)
+                    }
                     // Native MJPEG callback is independent of NV21 used for photo/recording.
                     (self as? CameraUVC)?.setMjpegDataCallback(IFrameCallback { buffer ->
                         if (buffer != null) StreamHub.offerUvc(buffer)
@@ -361,7 +367,6 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 }
                 ICameraStateCallBack.State.CLOSED -> {
                     uvcAudio?.stop()
-                    uvcBlock = null
                     opening = false; camera = null; ready = false
                     StreamHub.setUvcReady(false); status("USBカメラが切断されました")
                 }
@@ -398,14 +403,13 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     /** Do not substitute the built-in Android microphone for an HDMI UAC input. */
     fun startUvcAudio() {
         val c = camera ?: return
-        val block = uvcBlock ?: return
         if (!ready || recording || recordingRequested || stopping || !c.isMicSupported()) return
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) return
         val capture = uvcAudio ?: UsbAudioCapture(requireContext().applicationContext) {
             status(it)
         }.also { uvcAudio = it }
-        capture.start(block)
+        capture.start()
     }
 
     fun refreshUvcAudioMonitor() {
@@ -463,7 +467,6 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private fun closeCamera() {
         uvcAudio?.stop()
         recordingRequested = false
-        uvcBlock = null
         if (recording && !stopping) {
             // Best effort: finish the current MP4 before closing an unplugged
             // UVC device. The hardware may be already unavailable.
@@ -560,13 +563,9 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         if (recordingRequested) return
         recordingRequested = true
         val output = destination("mp4")
-        val withUac = c.isMicSupported() &&
-            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-        status(if (withUac) "USB映像と音声の録画を準備しています…" else
-            "USB映像のみ録画します（音声入力が利用できません）")
-        // AUSBC's built-in MP4 muxer takes over the USB Audio Class endpoint.
-        // Release the independent live monitor before starting local recording.
+        status("USB映像の録画を準備しています（音声はWindowsへの転送のみ）")
+        // UVC native MP4 is video-only in this safety build. The separate
+        // Android USB audio route is stopped during video file finalization.
         uvcAudio?.stop()
         retryHandler.postDelayed({
             if (!ready || closing || camera !== c) {
@@ -580,7 +579,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         recording = true
                         stopping = false
                         host()?.setRecording(true)
-                        status(if (withUac) "● USB映像・音声を録画中" else "● USB映像を録画中")
+                        status("● USB映像を録画中（MP4は映像のみ）")
                     }
                     override fun onError(error: String?) {
                         recordingRequested = false
