@@ -92,6 +92,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private lateinit var preview: AspectRatioTextureView
     private lateinit var placeholder: TextView
 
+    fun isSwitchingInput() = switchingUvcMode
+
     private fun host() = activity as? MainActivity
     private fun status(message: String) {
         Log.i("MyMonitor-UVC", message)
@@ -164,7 +166,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         host()?.runOnUiThread {
                             if (!UsbRecoveryPolicy.acceptEvent(epoch, monitorEpoch)) return@runOnUiThread
                             trace("CONNECT new=$createNew", device)
-                            if (device != null && ctrlBlock != null && isUvc(device) && !opening && !closing && camera == null) {
+                            if (device != null && ctrlBlock != null && isUvc(device) && !opening && !closing && !switchingUvcMode && camera == null) {
                                 waitingForPermission = false
                                 openCamera(device, ctrlBlock)
                             }
@@ -584,6 +586,14 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     override fun onDestroyView() {
         // Real view destruction is different from transient Activity onStop.
+        ++formatSwitchGeneration
+        switchingUvcMode = false
+        recordAfterSwitch = false
+        requestedUvcFormat = CameraRequest.PreviewFormat.FORMAT_MJPEG
+        requestedWidth = 1920
+        requestedHeight = 1080
+        sourceControl = null
+        sourceDevice = null
         ++retryGeneration
         closeCamera()
         resetUsbMonitor("VIEW_DESTROY")
