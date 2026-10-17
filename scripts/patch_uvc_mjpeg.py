@@ -220,13 +220,21 @@ patch(h264, """    /**
             val y = image.planes[0]
             val u = image.planes[1]
             val v = image.planes[2]
-            // Always use rowStride *and* pixelStride, including interleaved
-            // UV planes which may share memory with an offset.
-            for (row in 0 until height) {
-                val inputRow = row * width
-                val dstRow = row * y.rowStride
-                for (col in 0 until width) {
-                    y.buffer.put(dstRow + col * y.pixelStride, data[inputRow + col])
+            // Luma normally has pixelStride=1. Use bulk row writes for
+            // Full HD (3 million bytes/frame) to avoid per-pixel JNI work.
+            if (y.pixelStride == 1) {
+                val output = y.buffer.duplicate()
+                for (row in 0 until height) {
+                    output.position(row * y.rowStride)
+                    output.put(data, row * width, width)
+                }
+            } else {
+                for (row in 0 until height) {
+                    val inputRow = row * width
+                    val dstRow = row * y.rowStride
+                    for (col in 0 until width) {
+                        y.buffer.put(dstRow + col * y.pixelStride, data[inputRow + col])
+                    }
                 }
             }
             val offset = width * height
