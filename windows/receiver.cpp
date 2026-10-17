@@ -716,7 +716,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) 
             lastTitleUpdate = now;
             RECT client{};
             GetClientRect(hwnd, &client);
-            std::wstring title = L"My Cast Receiver 038 | ";
+            std::wstring title = L"My Cast Receiver 039 | ";
             title += linkConnected.load() ? L"Android接続中" : L"Android未接続・接続待機中";
             {
                 std::lock_guard<std::mutex> guard(lockFrame);

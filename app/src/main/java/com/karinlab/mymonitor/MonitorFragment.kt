@@ -44,6 +44,17 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private var camera: CameraUVC? = null
     private var uvcAudio: UsbAudioCapture? = null
     private var recordingRequested = false
+    // A mode switch reuses the USBMonitor-owned block after the native camera
+    // fully closes. It never creates a second simultaneous libusb camera.
+    private var sourceControl: USBMonitor.UsbControlBlock? = null
+    private var sourceDevice: UsbDevice? = null
+    private var requestedUvcFormat = CameraRequest.PreviewFormat.FORMAT_MJPEG
+    private var requestedWidth = 1920
+    private var requestedHeight = 1080
+    private var switchingUvcMode = false
+    private var recordAfterSwitch = false
+    private var hqRecordingActive = false
+    private var formatSwitchGeneration = 0
     private var currentDeviceId: Int? = null
     private var waitingForPermission = false
     private var opening = false
@@ -80,6 +91,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     private var lastFit = PreviewGeometry.Size(0, 0)
     private lateinit var preview: AspectRatioTextureView
     private lateinit var placeholder: TextView
+
+    fun isSwitchingInput() = switchingUvcMode
 
     private fun host() = activity as? MainActivity
     private fun status(message: String) {
@@ -153,7 +166,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         host()?.runOnUiThread {
                             if (!UsbRecoveryPolicy.acceptEvent(epoch, monitorEpoch)) return@runOnUiThread
                             trace("CONNECT new=$createNew", device)
-                            if (device != null && ctrlBlock != null && isUvc(device) && !opening && !closing && camera == null) {
+                            if (device != null && ctrlBlock != null && isUvc(device) && !opening && !closing && !switchingUvcMode && camera == null) {
                                 waitingForPermission = false
                                 openCamera(device, ctrlBlock)
                             }
@@ -236,7 +249,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     }
 
     fun refreshUsb() {
-        if (!isAdded || !viewReady) return
+        if (!isAdded || !viewReady || switchingUvcMode) return
         val manager = requireContext().getSystemService(Context.USB_SERVICE) as UsbManager
         val devices = manager.deviceList.values.filter(::isUvc)
         if (devices.isEmpty()) {
@@ -293,6 +306,8 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         if (opening || closing || camera != null || !physicalPresent(device)) return
         opening = true
         currentDeviceId = device.deviceId
+        sourceDevice = device
+        sourceControl = control
         status("USB許可取得、UVCオープン中")
         try {
             val newCamera = CameraUVC(requireContext(), device)
@@ -301,15 +316,19 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             newCamera.setCameraStateCallBack(this)
             newCamera.addPreviewDataCallBack(object : IPreviewDataCallBack {
                 override fun onPreviewData(data: ByteArray?, width: Int, height: Int, format: IPreviewDataCallBack.DataFormat) {
-                    if (data != null && format == IPreviewDataCallBack.DataFormat.NV21) {
+                    // Do not JPEG-recompress every YUYV frame to Windows
+                    // while high-quality recording is running. The normal
+                    // low latency MJPEG fast path resumes after the capture.
+                    if (!hqRecordingActive && data != null &&
+                        format == IPreviewDataCallBack.DataFormat.NV21) {
                         StreamHub.offerUvcNv21(data, width, height)
                     }
                 }
             })
             val request = CameraRequest.Builder()
-                .setPreviewWidth(1920).setPreviewHeight(1080)
+                .setPreviewWidth(requestedWidth).setPreviewHeight(requestedHeight)
                 .setRawPreviewData(true)
-                .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
+                .setPreviewFormat(requestedUvcFormat)
                 // NORMAL uses UVCCamera.setPreviewTexture directly; OPENGL
                 // cached its original EGL viewport, leaving a 480x270 picture
                 // after phone rotation despite a larger TextureView rectangle.
@@ -340,6 +359,9 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     ready = true
                     StreamHub.setUvcReady(true)
                     host()?.onUvcReady()
+                    hqRecordingActive = requestedUvcFormat ==
+                        CameraRequest.PreviewFormat.FORMAT_YUYV
+                    switchingUvcMode = false
                     if ((self as? CameraUVC)?.isMicSupported() == true) {
                         // Allow the UVC camera to settle before Android opens
                         // a separate *framework-managed* USB audio endpoint.
@@ -349,9 +371,11 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         }, 1200L)
                     }
                     // Native MJPEG callback is independent of NV21 used for photo/recording.
-                    (self as? CameraUVC)?.setMjpegDataCallback(IFrameCallback { buffer ->
-                        if (buffer != null) StreamHub.offerUvc(buffer)
-                    })
+                    if (!hqRecordingActive) {
+                        (self as? CameraUVC)?.setMjpegDataCallback(IFrameCallback { buffer ->
+                            if (buffer != null) StreamHub.offerUvc(buffer)
+                        })
+                    }
                     placeholder.visibility = View.GONE
                     val request = self.getCameraRequest()
                     val width = request?.previewWidth ?: 0
@@ -363,7 +387,34 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                         updateSurfaceSize()
                     }
                     trace("OPENED")
-                    status("UVC映像 ${width}×${height}" + if (width == 1920 && height == 1080) " / Full HD" else " / 機器が選択した解像度")
+                    if (hqRecordingActive) {
+                        status("非圧縮YUY2 ${width}×${height} / 高画質録画を準備中（Windows転送は一時停止）")
+                        if (recordAfterSwitch) {
+                            recordAfterSwitch = false
+                            // Give OS-routed USB audio a chance to settle, without
+                            // any extra native USB audio claims.
+                            val current = camera
+                            retryHandler.postDelayed({
+                                if (ready && !closing && !switchingUvcMode &&
+                                    current != null && current === camera &&
+                                    hqRecordingActive && !recording) {
+                                    beginUvcRecording(current)
+                                }
+                            }, 2100L)
+                        }
+                    } else {
+                        status("UVC映像 ${width}×${height}" +
+                            if (width == 1920 && height == 1080) " / Full HD / MJPEG低遅延" else " / MJPEG低遅延")
+                        if (recordAfterSwitch) {
+                            recordAfterSwitch = false
+                            val current = camera
+                            retryHandler.postDelayed({
+                                if (ready && !closing && current != null &&
+                                    current === camera && !recording)
+                                    beginUvcRecording(current)
+                            }, 800L)
+                        }
+                    }
                 }
                 ICameraStateCallBack.State.CLOSED -> {
                     uvcAudio?.stop()
@@ -371,6 +422,13 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                     StreamHub.setUvcReady(false); status("USBカメラが切断されました")
                 }
                 ICameraStateCallBack.State.ERROR -> {
+                    if (requestedUvcFormat == CameraRequest.PreviewFormat.FORMAT_YUYV &&
+                        !recording) {
+                        status("この接続では非圧縮YUY2を使用できません。MJPEG録画へ切り替えます")
+                        switchUvcFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG,
+                            1920, 1080, true)
+                        return@runOnUiThread
+                    }
                     status("UVCエラー: ${msg ?: "unknown"}")
                     val failedDeviceId = currentDeviceId
                     closeCamera()
@@ -431,6 +489,15 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     /** Physical unplug path. Different from onStop, which only pauses preview. */
     fun usbDetached() {
+        ++formatSwitchGeneration
+        switchingUvcMode = false
+        recordAfterSwitch = false
+        requestedUvcFormat = CameraRequest.PreviewFormat.FORMAT_MJPEG
+        requestedWidth = 1920
+        requestedHeight = 1080
+        hqRecordingActive = false
+        sourceControl = null
+        sourceDevice = null
         val hadDevice = lastEnumeratedDeviceId != null || camera != null || opening || ready
         lastEnumeratedDeviceId = null
         ++retryGeneration
@@ -467,6 +534,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
     }
 
     private fun closeCamera() {
+        hqRecordingActive = false
         // A USB unplug may arrive before the native MP4 completion callback.
         // Detach only the Android-framework PCM sink, never block camera close.
         uvcAudio?.detachRecording()?.let { orphan ->
@@ -518,6 +586,14 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
 
     override fun onDestroyView() {
         // Real view destruction is different from transient Activity onStop.
+        ++formatSwitchGeneration
+        switchingUvcMode = false
+        recordAfterSwitch = false
+        requestedUvcFormat = CameraRequest.PreviewFormat.FORMAT_MJPEG
+        requestedWidth = 1920
+        requestedHeight = 1080
+        sourceControl = null
+        sourceDevice = null
         ++retryGeneration
         closeCamera()
         resetUsbMonitor("VIEW_DESTROY")
@@ -556,7 +632,69 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
         }
     }
 
+    /**
+     * Switch the SINGLE physical UVC stream. The USBMonitor stays registered,
+     * and the original UsbControlBlock remains owned by it. Never attempt
+     * YUY2 and MJPEG simultaneously on the same libusb device.
+     */
+    private fun switchUvcFormat(
+        target: CameraRequest.PreviewFormat, width: Int, height: Int,
+        startRecordingAfterOpen: Boolean
+    ) {
+        val device = sourceDevice
+        val control = sourceControl
+        if (device == null || control == null || !physicalPresent(device)) {
+            status("USBカメラの接続を確認できません。再接続してください")
+            recordAfterSwitch = false
+            switchingUvcMode = false
+            return
+        }
+        val generation = ++formatSwitchGeneration
+        switchingUvcMode = true
+        recordAfterSwitch = startRecordingAfterOpen
+        requestedUvcFormat = target
+        requestedWidth = width
+        requestedHeight = height
+        closeCamera()
+        // Native CameraUVC.closeCamera() is asynchronous, so wait for native
+        // preview/libusb cleanup before reusing the monitor-owned control block.
+        retryHandler.postDelayed({
+            if (generation != formatSwitchGeneration || !switchingUvcMode) return@postDelayed
+            if (!isAdded || !viewReady || !physicalPresent(device) ||
+                (host()?.isFinishing == true)) {
+                switchingUvcMode = false
+                recordAfterSwitch = false
+                requestedUvcFormat = CameraRequest.PreviewFormat.FORMAT_MJPEG
+                return@postDelayed
+            }
+            openCamera(device, control)
+        }, 1250L)
+        // An unsupported high-bandwidth mode must never leave the UI hung.
+        retryHandler.postDelayed({
+            if (generation == formatSwitchGeneration && switchingUvcMode &&
+                target == CameraRequest.PreviewFormat.FORMAT_YUYV &&
+                !ready && isAdded && viewReady && physicalPresent(device)) {
+                status("非圧縮YUY2の起動がタイムアウトしました。MJPEGに戻します")
+                switchUvcFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG,
+                    1920, 1080, startRecordingAfterOpen)
+            }
+        }, 9500L)
+    }
+
+    private fun returnToLowLatencyAfterRecording() {
+        if (requestedUvcFormat != CameraRequest.PreviewFormat.FORMAT_YUYV ||
+            switchingUvcMode || host()?.isFinishing == true ||
+            host()?.isDestroyed == true) return
+        status("録画終了。Windows向けMJPEG低遅延モードへ戻します…")
+        switchUvcFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG,
+            1920, 1080, false)
+    }
+
     fun toggleRecording() {
+        if (switchingUvcMode) {
+            status("USB入力形式を切り替えています。少しお待ちください")
+            return
+        }
         val c = camera
         if (recording) {
             if (!stopping) {
@@ -571,6 +709,33 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
             return
         }
         if (recordingRequested) return
+        if (!hqRecordingActive &&
+            requireContext().getSharedPreferences("monitor", Context.MODE_PRIVATE)
+                .getBoolean("hq_recording", true)) {
+            val sizes = try {
+                c.getUncompressedYuyvSizes().map {
+                    UvcRecordingPolicy.Size(it.width, it.height)
+                }
+            } catch (e: Exception) {
+                Log.w("MyMonitor-UVC", "YUYV capability lookup failed", e)
+                emptyList()
+            }
+            val candidate = UvcRecordingPolicy.chooseYuy2(
+                inputWidth, inputHeight, sizes, true)
+            if (candidate != null) {
+                status("高画質録画：非圧縮YUY2 ${candidate.width}×${candidate.height}に切り替えます")
+                switchUvcFormat(CameraRequest.PreviewFormat.FORMAT_YUYV,
+                    candidate.width, candidate.height, true)
+                return
+            }
+            status("この解像度の非圧縮YUY2は未対応。MJPEG入力で高画質H.264録画します")
+        }
+        beginUvcRecording(c)
+    }
+
+    private fun beginUvcRecording(c: CameraUVC) {
+        if (recordingRequested || recording || !ready || camera !== c || closing)
+            return
         // Safe sound is already flowing through Android AudioRecord if and
         // only if Android has confirmed the actual USB input route. Never
         // restart the native USB device or enable AUSBC's UAC microphone.
@@ -607,6 +772,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                             }, "MyMonitorDiscardUsbSound").start()
                         }
                         resumeUvcAudioAfterRecording()
+                        host()?.runOnUiThread { returnToLowLatencyAfterRecording() }
                     }
                     override fun onComplete(path: String?) {
                         recordingRequested = false
@@ -651,6 +817,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                             status("録画ファイルが見つかりません")
                         }
                         resumeUvcAudioAfterRecording()
+                        host()?.runOnUiThread { returnToLowLatencyAfterRecording() }
                     }
                 }, output.absolutePath)
             } catch (e: Exception) {
@@ -667,6 +834,7 @@ class MonitorFragment : Fragment(), ICameraStateCallBack {
                 }
                 Log.e("MyMonitor-UVC", "UVC recording failed", e)
                 resumeUvcAudioAfterRecording()
+                host()?.runOnUiThread { returnToLowLatencyAfterRecording() }
             }
         }, 300L)
     }
